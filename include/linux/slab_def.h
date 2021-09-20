@@ -85,6 +85,8 @@ struct kmem_cache {
 	unsigned int usersize;		/* Usercopy region size */
 
 	struct kmem_cache_node *node[MAX_NUMNODES];
+
+	struct kmem_lockless_cache __percpu *cache; /* percpu lockless cache */
 };
 
 static inline void *nearest_obj(struct kmem_cache *cache, struct page *page,

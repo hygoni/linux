@@ -96,6 +96,7 @@ struct kmem_cache {
 	unsigned int object_size;/* The size of an object without metadata */
 	struct reciprocal_value reciprocal_size;
 	unsigned int offset;	/* Free pointer offset */
+	struct kmem_lockless_cache __percpu *cache; /* percpu lockless cache */
 #ifdef CONFIG_SLUB_CPU_PARTIAL
 	/* Number of per cpu partial objects to keep around */
 	unsigned int cpu_partial;

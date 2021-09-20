@@ -120,6 +120,9 @@
 /* Slab deactivation flag */
 #define SLAB_DEACTIVATED	((slab_flags_t __force)0x10000000U)
 
+/* use percpu lockless cache */
+#define SLAB_LOCKLESS_CACHE	((slab_flags_t __force)0x20000000U)
+
 /*
  * ZERO_SIZE_PTR will be returned for zero sized kmalloc requests.
  *
@@ -327,6 +330,13 @@ enum kmalloc_cache_type {
 	NR_KMALLOC_TYPES
 };
 
+#define KMEM_LOCKLESS_CACHE_QUEUE_SIZE 64
+
+struct kmem_lockless_cache {
+	void *queue[KMEM_LOCKLESS_CACHE_QUEUE_SIZE];
+	unsigned int size;
+};
+
 #ifndef CONFIG_SLOB
 extern struct kmem_cache *
 kmalloc_caches[NR_KMALLOC_TYPES][KMALLOC_SHIFT_HIGH + 1];
@@ -428,6 +438,19 @@ static __always_inline unsigned int __kmalloc_index(size_t size,
 void *__kmalloc(size_t size, gfp_t flags) __assume_kmalloc_alignment __malloc;
 void *kmem_cache_alloc(struct kmem_cache *, gfp_t flags) __assume_slab_alignment __malloc;
 void kmem_cache_free(struct kmem_cache *, void *);
+
+#ifndef CONFIG_SLOB
+
+void *kmem_cache_alloc_cached(struct kmem_cache *s, gfp_t gfpflags);
+void kmem_cache_free_cached(struct kmem_cache *s, void *p);
+
+#else
+
+#define kmem_cache_alloc_cached kmem_cache_alloc
+#define kmem_cache_free_cached kmem_cache_free
+
+#endif /* CONFIG_SLOB */
+
 
 /*
  * Bulk allocation and freeing operations. These are accelerated in an
