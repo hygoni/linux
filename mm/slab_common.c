@@ -449,6 +449,9 @@ void *kmem_cache_alloc_cached(struct kmem_cache *s, gfp_t gfpflags)
 
 	// BUG_ON(!(s->flags & SLAB_LOCKLESS_CACHE));
 
+	if (!s->cache)
+		return kmem_cache_alloc(s, gfpflags);
+
 	cache = get_cpu_ptr(s->cache);
 	if (cache->size > KMEM_LOCKLESS_CACHE_QUEUE_SIZE
 			- KMEM_LOCKLESS_CACHE_BATCHCOUNT)
@@ -481,11 +484,16 @@ void kmem_cache_free_cached(struct kmem_cache *s, void *p)
 
 	// BUG_ON(!(s->flags & SLAB_LOCKLESS_CACHE));
 	
+	if (!s->cache) {
+		kmem_cache_free(s, p);
+		return;
+	}
+
 	cache = get_cpu_ptr(s->cache);
 	if (cache->size < KMEM_LOCKLESS_CACHE_QUEUE_SIZE) {
 		cache->queue[cache->size++] = p;
 		put_cpu_ptr(s->cache);
-		return ;
+		return;
 	} else {
 		kmem_cache_free_bulk(s, KMEM_LOCKLESS_CACHE_BATCHCOUNT,
 				cache->queue);
@@ -734,6 +742,8 @@ void __init create_boot_cache(struct kmem_cache *s, const char *name,
 
 	s->useroffset = useroffset;
 	s->usersize = usersize;
+	s->cache = alloc_percpu(struct kmem_lockless_cache);
+	WARN_ON_ONCE(!s->cache);
 
 	err = __kmem_cache_create(s, flags);
 
