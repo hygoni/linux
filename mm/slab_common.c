@@ -446,20 +446,30 @@ EXPORT_SYMBOL(kmem_cache_create);
  */
 void *kmem_cache_alloc_cached(struct kmem_cache *s, gfp_t gfpflags)
 {
-	struct kmem_lockless_cache *cache = this_cpu_ptr(s->cache);
+	struct kmem_lockless_cache *cache;
+	void *p;
 
-	BUG_ON(!(s->flags & SLAB_LOCKLESS_CACHE));
+	// BUG_ON(!(s->flags & SLAB_LOCKLESS_CACHE));
+	if (in_interrupt()) {
+		return kmem_cache_alloc(s, gfpflags);
+	}
 
+	cache = get_cpu_ptr(s->cache);
 	if (cache->size) /* fastpath without lock */
-		return cache->queue[--cache->size];
+		p = cache->queue[--cache->size];
+	else {
+		/* slowpath */
+		cache->size = kmem_cache_alloc_bulk(s, gfpflags,
+				KMEM_LOCKLESS_CACHE_QUEUE_SIZE, cache->queue);
+		if (cache->size)
+			p = cache->queue[--cache->size];
+		else
+			p = NULL;
+	}
+	put_cpu_ptr(s->cache);
 
-	/* slowpath */
-	cache->size = kmem_cache_alloc_bulk(s, gfpflags,
-			KMEM_LOCKLESS_CACHE_QUEUE_SIZE, cache->queue);
-	if (cache->size)
-		return cache->queue[--cache->size];
-	else
-		return NULL;
+	return p;
+
 }
 EXPORT_SYMBOL(kmem_cache_alloc_cached);
 
@@ -470,15 +480,24 @@ EXPORT_SYMBOL(kmem_cache_alloc_cached);
  */
 void kmem_cache_free_cached(struct kmem_cache *s, void *p)
 {
-	struct kmem_lockless_cache *cache = this_cpu_ptr(s->cache);
+	struct kmem_lockless_cache *cache;
 
-	BUG_ON(!(s->flags & SLAB_LOCKLESS_CACHE));
+	// BUG_ON(!(s->flags & SLAB_LOCKLESS_CACHE));
+	if (in_interrupt()) {
+		kmem_cache_free(s, p);
+		return ;
+	}
+
+	cache = get_cpu_ptr(s->cache);
+	if (cache->size < KMEM_LOCKLESS_CACHE_QUEUE_SIZE) {
+		cache->queue[cache->size++] = p;
+		put_cpu_ptr(s->cache);
+		return ;
+	}
+	put_cpu_ptr(s->cache);
 
 	/* Is there better way to do this? */
-	if (cache->size == KMEM_LOCKLESS_CACHE_QUEUE_SIZE)
-		kmem_cache_free(s, cache->queue[--cache->size]);
-
-	cache->queue[cache->size++] = p;
+	kmem_cache_free(s, p);
 }
 EXPORT_SYMBOL(kmem_cache_free_cached);
 
