@@ -3216,8 +3216,15 @@ static __always_inline void *slab_alloc(struct kmem_cache *s,
 
 void *kmem_cache_alloc(struct kmem_cache *s, gfp_t gfpflags)
 {
-	void *ret = slab_alloc(s, gfpflags, _RET_IP_, s->object_size);
+	void *ret;
 
+	if (!in_interrupt()) {
+		ret = kmem_cache_alloc_cached(s, gfpflags);
+		if (ret)
+			return ret;
+	}
+
+	ret = slab_alloc(s, gfpflags, _RET_IP_, s->object_size);
 	trace_kmem_cache_alloc(_RET_IP_, ret, s->object_size,
 				s->size, gfpflags);
 
@@ -3496,6 +3503,12 @@ void kmem_cache_free(struct kmem_cache *s, void *x)
 	s = cache_from_obj(s, x);
 	if (!s)
 		return;
+
+	if (!in_interrupt()) {
+		kmem_cache_free_cached(s, x);
+		return ;
+	}
+
 	slab_free(s, virt_to_head_page(x), x, NULL, 1, _RET_IP_);
 	trace_kmem_cache_free(_RET_IP_, x, s->name);
 }

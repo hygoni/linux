@@ -331,6 +331,7 @@ enum kmalloc_cache_type {
 };
 
 #define KMEM_LOCKLESS_CACHE_QUEUE_SIZE 64
+#define KMEM_LOCKLESS_CACHE_BATCHCOUNT 32
 
 struct kmem_lockless_cache {
 	void *queue[KMEM_LOCKLESS_CACHE_QUEUE_SIZE];
