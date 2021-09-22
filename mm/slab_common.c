@@ -262,12 +262,10 @@ static struct kmem_cache *create_cache(const char *name,
 	s->useroffset = useroffset;
 	s->usersize = usersize;
 
-	if (flags & SLAB_LOCKLESS_CACHE) {
-		s->cache = alloc_percpu(struct kmem_lockless_cache);
-		if (!s->cache)
-			goto out_free_cache;
-		s->cache->size = 0;
-	}
+	s->cache = alloc_percpu(struct kmem_lockless_cache);
+	if (!s->cache)
+		goto out_free_cache;
+	s->cache->size = 0;
 
 	err = __kmem_cache_create(s, flags);
 	if (err)
@@ -547,11 +545,9 @@ static int shutdown_cache(struct kmem_cache *s)
 
 	list_del(&s->list);
 
-	if (s->flags & SLAB_LOCKLESS_CACHE) {
-		cache = this_cpu_ptr(s->cache);
-		kmem_cache_free_bulk(s, cache->size, cache->queue);
-		free_percpu(s->cache);
-	}
+	cache = this_cpu_ptr(s->cache);
+	kmem_cache_free_bulk(s, cache->size, cache->queue);
+	free_percpu(s->cache);
 
 	if (s->flags & SLAB_TYPESAFE_BY_RCU) {
 #ifdef SLAB_SUPPORTS_SYSFS
