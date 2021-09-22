@@ -742,8 +742,7 @@ void __init create_boot_cache(struct kmem_cache *s, const char *name,
 
 	s->useroffset = useroffset;
 	s->usersize = usersize;
-	s->cache = alloc_percpu(struct kmem_lockless_cache);
-	WARN_ON_ONCE(!s->cache);
+	s->cache = NULL;
 
 	err = __kmem_cache_create(s, flags);
 

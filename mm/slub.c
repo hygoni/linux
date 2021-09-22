@@ -3218,7 +3218,7 @@ void *kmem_cache_alloc(struct kmem_cache *s, gfp_t gfpflags)
 {
 	void *ret;
 
-	if (!in_interrupt()) {
+	if (!in_interrupt() && !s->cache) {
 		ret = kmem_cache_alloc_cached(s, gfpflags);
 		if (ret)
 			return ret;
@@ -3504,7 +3504,7 @@ void kmem_cache_free(struct kmem_cache *s, void *x)
 	if (!s)
 		return;
 
-	if (!in_interrupt()) {
+	if (!in_interrupt() && !s->cache) {
 		kmem_cache_free_cached(s, x);
 		return ;
 	}
