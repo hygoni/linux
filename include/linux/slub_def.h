@@ -13,6 +13,10 @@
 #include <linux/local_lock.h>
 
 enum stat_item {
+	ALLOC_LOCKLESS_FASTPATH /* Allocation from lockless cache without bulk allocation */,
+	ALLOC_LOCKLESS_SLOWPATH,/* Allocation from lockless cache with bulk allocation */
+	FREE_LOCKLESS_FASTPATH, /* Freeing to lockless cache without bulk freeing */
+	FREE_LOCKLESS_SLOWPATH, /* Freeing to lockless cache with bulk freeing */
 	ALLOC_FASTPATH,		/* Allocation from cpu slab */
 	ALLOC_SLOWPATH,		/* Allocation by getting a new cpu slab */
 	FREE_FASTPATH,		/* Free to cpu slab */
@@ -96,6 +100,7 @@ struct kmem_cache {
 	unsigned int object_size;/* The size of an object without metadata */
 	struct reciprocal_value reciprocal_size;
 	unsigned int offset;	/* Free pointer offset */
+	struct kmem_lockless_cache __percpu *cache; /* percpu lockless cache */
 #ifdef CONFIG_SLUB_CPU_PARTIAL
 	/* Number of per cpu partial objects to keep around */
 	unsigned int cpu_partial;

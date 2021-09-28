@@ -3225,10 +3225,46 @@ void *kmem_cache_alloc(struct kmem_cache *s, gfp_t gfpflags)
 }
 EXPORT_SYMBOL(kmem_cache_alloc);
 
+void *__kmem_cache_alloc_cached(struct kmem_cache *s, gfp_t gfpflags)
+{
+	struct kmem_lockless_cache *cache;
+	void *p = NULL;
+	gfp_t orig = gfpflags;
+
+	if (WARN_ON_ONCE(in_interrupt() ||
+				!(s->flags & SLAB_LOCKLESS_CACHE))) {
+		return kmem_cache_alloc(s, gfpflags);
+	}
+
+	cache = get_cpu_ptr(s->cache);
+	if (cache->size) {
+		stat(s, ALLOC_LOCKLESS_FASTPATH);
+		p = cache->queue[--cache->size];
+	} else {
+		stat(s, ALLOC_LOCKLESS_SLOWPATH);
+		gfpflags &= GFP_ATOMIC;
+		if (!gfpflags)
+			gfpflags = GFP_ATOMIC;
+
+		cache->size += kmem_cache_alloc_bulk(s, gfpflags,
+				KMEM_LOCKLESS_CACHE_BATCHCOUNT,
+				cache->queue);
+		if (cache->size)
+			p = cache->queue[--cache->size];
+	}
+	put_cpu_ptr(s->cache);
+
+	if (unlikely(p && (orig & __GFP_ZERO)))
+		memset(p, 0, kmem_cache_size(s));
+
+	return p;
+}
+
 #ifdef CONFIG_TRACING
 void *kmem_cache_alloc_trace(struct kmem_cache *s, gfp_t gfpflags, size_t size)
 {
 	void *ret = slab_alloc(s, gfpflags, _RET_IP_, size);
+
 	trace_kmalloc(_RET_IP_, ret, size, s->size, gfpflags);
 	ret = kasan_kmalloc(s, ret, size, gfpflags);
 	return ret;
@@ -3490,6 +3526,29 @@ void ___cache_free(struct kmem_cache *cache, void *x, unsigned long addr)
 	do_slab_free(cache, virt_to_head_page(x), x, NULL, 1, addr);
 }
 #endif
+
+void __kmem_cache_free_cached(struct kmem_cache *s, void *p)
+{
+	struct kmem_lockless_cache *cache;
+
+	if (WARN_ON_ONCE(in_interrupt() ||
+				!(s->flags & SLAB_LOCKLESS_CACHE))) {
+		kmem_cache_free(s, p);
+		return;
+	}
+
+	cache = get_cpu_ptr(s->cache);
+	if (cache->size < KMEM_LOCKLESS_CACHE_QUEUE_SIZE)
+		cache->queue[cache->size++] = p;
+	else {
+		kmem_cache_free_bulk(s,
+				KMEM_LOCKLESS_CACHE_BATCHCOUNT,
+				cache->queue + KMEM_LOCKLESS_CACHE_QUEUE_SIZE
+				- KMEM_LOCKLESS_CACHE_BATCHCOUNT);
+		cache->size -= KMEM_LOCKLESS_CACHE_BATCHCOUNT;
+	}
+	put_cpu_ptr(s->cache);
+}
 
 void kmem_cache_free(struct kmem_cache *s, void *x)
 {
@@ -5678,6 +5737,11 @@ static ssize_t text##_store(struct kmem_cache *s,		\
 }								\
 SLAB_ATTR(text);						\
 
+STAT_ATTR(ALLOC_LOCKLESS_FASTPATH, alloc_lockless_fastpath);
+STAT_ATTR(ALLOC_LOCKLESS_SLOWPATH, alloc_lockless_slowpath);
+STAT_ATTR(FREE_LOCKLESS_FASTPATH, free_lockless_fastpath);
+STAT_ATTR(FREE_LOCKLESS_SLOWPATH, free_lockless_slowpath);
+
 STAT_ATTR(ALLOC_FASTPATH, alloc_fastpath);
 STAT_ATTR(ALLOC_SLOWPATH, alloc_slowpath);
 STAT_ATTR(FREE_FASTPATH, free_fastpath);
@@ -5742,6 +5806,10 @@ static struct attribute *slab_attrs[] = {
 	&remote_node_defrag_ratio_attr.attr,
 #endif
 #ifdef CONFIG_SLUB_STATS
+	&alloc_lockless_fastpath_attr.attr,
+	&alloc_lockless_slowpath_attr.attr,
+	&free_lockless_fastpath_attr.attr,
+	&free_lockless_slowpath_attr.attr,
 	&alloc_fastpath_attr.attr,
 	&alloc_slowpath_attr.attr,
 	&free_fastpath_attr.attr,

@@ -244,7 +244,10 @@ static struct kmem_cache *create_cache(const char *name,
 		unsigned int usersize, void (*ctor)(void *),
 		struct kmem_cache *root_cache)
 {
+	int cpu;
 	struct kmem_cache *s;
+	struct kmem_lockless_cache *cache;
+
 	int err;
 
 	if (WARN_ON(useroffset + usersize > object_size))
@@ -261,6 +264,17 @@ static struct kmem_cache *create_cache(const char *name,
 	s->ctor = ctor;
 	s->useroffset = useroffset;
 	s->usersize = usersize;
+
+	if (flags & SLAB_LOCKLESS_CACHE) {
+		s->cache = alloc_percpu(struct kmem_lockless_cache);
+		if (WARN_ON(IS_ERR_OR_NULL(s->cache)))
+			goto out_free_cache;
+
+		for_each_possible_cpu(cpu) {
+			cache = per_cpu_ptr(s->cache, cpu);
+			cache->size = 0;
+		}
+	}
 
 	err = __kmem_cache_create(s, flags);
 	if (err)
@@ -424,6 +438,37 @@ kmem_cache_create(const char *name, unsigned int size, unsigned int align,
 }
 EXPORT_SYMBOL(kmem_cache_create);
 
+/**
+ * kmem_cache_alloc_cached - try to allocate from cache without lock
+ * @s: slab cache
+ * @flags: SLAB flags
+ *
+ * Try to allocate from cache without lock. On failure,
+ * fill the lockless cache using bulk alloc API.
+ * If bulk allocation also fails, return NULL.
+ *
+ * Note: hard/soft IRQ context is not supported.
+ * Note: Must create slab cache with SLAB_LOCKLESS_CACHE flag to call this function.
+ *
+ * Return: a pointer to free object on allocation success, NULL on failure.
+ */
+void *kmem_cache_alloc_cached(struct kmem_cache *s, gfp_t gfpflags)
+{
+	return __kmem_cache_alloc_cached(s, gfpflags);
+}
+EXPORT_SYMBOL(kmem_cache_alloc_cached);
+
+/**
+ * kmem_cache_free_cached - return object to cache
+ * @s: slab cache
+ * @p: pointer to free
+ */
+void kmem_cache_free_cached(struct kmem_cache *s, void *p)
+{
+	__kmem_cache_free_cached(s, p);
+}
+EXPORT_SYMBOL(kmem_cache_free_cached);
+
 static void slab_caches_to_rcu_destroy_workfn(struct work_struct *work)
 {
 	LIST_HEAD(to_destroy);
@@ -460,6 +505,9 @@ static void slab_caches_to_rcu_destroy_workfn(struct work_struct *work)
 
 static int shutdown_cache(struct kmem_cache *s)
 {
+	struct kmem_lockless_cache *cache;
+	int cpu;
+
 	/* free asan quarantined objects */
 	kasan_cache_shutdown(s);
 
@@ -467,6 +515,14 @@ static int shutdown_cache(struct kmem_cache *s)
 		return -EBUSY;
 
 	list_del(&s->list);
+
+	if (s->flags & SLAB_LOCKLESS_CACHE) {
+		for_each_possible_cpu(cpu) {
+			cache = per_cpu_ptr(s->cache, cpu);
+			kmem_cache_free_bulk(s, cache->size, cache->queue);
+		}
+		free_percpu(s->cache);
+	}
 
 	if (s->flags & SLAB_TYPESAFE_BY_RCU) {
 #ifdef SLAB_SUPPORTS_SYSFS
