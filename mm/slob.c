@@ -6,42 +6,42 @@
  *
  * NUMA support by Paul Mundt, 2007.
  *
+ * Segregated free list by Hyeonggon Yoo, 2021.
+ *
  * How SLOB works:
  *
- * The core of SLOB is a traditional K&R style heap allocator, with
+ * The core of SLOB is a simple segregated free list, with
  * support for returning aligned objects. The granularity of this
- * allocator is as little as 2 bytes, however typically most architectures
- * will require 4 bytes on 32-bit and 8 bytes on 64-bit.
+ * allocator is as little as size of pointers. This will require
+ * 4 bytes on 32-bit and 8 bytes on 64-bit.
  *
  * The slob heap is a set of linked list of pages from alloc_pages(),
- * and within each page, there is a singly-linked list of free blocks
- * (slob_t). The heap is grown on demand. To reduce fragmentation,
- * heap pages are segregated into three lists, with objects less than
- * 256 bytes, objects less than 1024 bytes, and all other objects.
+ * and within each page, there is a singly-linked list of free blocks.
+ * The heap is grown on demand. To reduce fragmentation, slob manages
+ * list for every power of two sizes. (8, 16, 32, ..., PAGE_SIZE)
  *
- * Allocation from heap involves first searching for a page with
- * sufficient free blocks (using a next-fit-like approach) followed by
- * a first-fit scan of the page. Deallocation inserts objects back
- * into the free list in address order, so this is effectively an
- * address-ordered first fit.
- *
- * Above this is an implementation of kmalloc/kfree. Blocks returned
- * from kmalloc are prepended with a 4-byte header with the kmalloc size.
- * If kmalloc is asked for objects of PAGE_SIZE or larger, it calls
+ * If SLOB is asked for objects of PAGE_SIZE or larger, it calls
  * alloc_pages() directly, allocating compound pages so the page order
  * does not have to be separately tracked.
- * These objects are detected in kfree() because PageSlab()
+ * These objects are detected in kfree()/slob_free() because PageSlab()
  * is false for them.
+ *
+ * Allocation from heap involves first finding partial page for
+ * requested size followed by taking a freelist of the page.
+ *
+ * Deallocation inserts objects back into the head of freelist.
+ * To know size of an object at free, size is written in page->object_size
+ * when allocating pages. this works because size of objects are same if
+ * they are in same page.
+ *
+ * Allocation/Deallocation is done in constant time as SLOB does not
+ * iterate list of free objects.
  *
  * SLAB is emulated on top of SLOB by simply calling constructors and
  * destructors for every SLAB allocation. Objects are returned with the
- * 4-byte alignment unless the SLAB_HWCACHE_ALIGN flag is set, in which
- * case the low-level allocator will fragment blocks to create the proper
- * alignment. Again, objects of page-size or greater are allocated by
- * calling alloc_pages(). As SLAB objects know their size, no separate
- * size bookkeeping is necessary and there is essentially no allocation
- * space overhead, and compound pages aren't needed for multi-page
- * allocations.
+ * pointer-size alignment unless kmem_cache does not specify its alignment.
+ * Again, objects of page-size or greater are allocated by calling
+ * alloc_pages().
  *
  * NUMA support in SLOB is fairly simplistic, pushing most of the real
  * logic down to the page allocator, and simply doing the node accounting
@@ -50,11 +50,9 @@
  * instead. The common case (or when the node id isn't explicitly provided)
  * will default to the current node, as per numa_node_id().
  *
- * Node aware pages are still inserted in to the global freelist, and
- * these are scanned for by matching against the node id encoded in the
- * page flags. As a result, block allocations that can be satisfied from
- * the freelist will only be done so on pages residing on the same node,
- * in order to prevent random node placement.
+ * A list of partial pages of a size, exists per NUMA node. So allocations
+ * that can be satisfied from the freelist will only be done so on pages
+ * residing on the same node, in order to prevent random node placement.
  */
 
 #include <linux/kernel.h>
