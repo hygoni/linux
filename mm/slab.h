@@ -6,6 +6,14 @@
  */
 
 #ifdef CONFIG_SLOB
+
+/* slob exists globally per size */
+struct slob {
+	size_t size;
+	spinlock_t lock;
+	struct list_head head[MAX_NUMNODES];
+};
+
 /*
  * Common fields provided in kmem_cache by all slab allocators
  * This struct is either used directly by the allocator (SLOB)

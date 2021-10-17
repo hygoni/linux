@@ -209,7 +209,8 @@ struct page {
 		unsigned int page_type;
 
 		unsigned int active;		/* SLAB */
-		int units;			/* SLOB */
+		unsigned int object_size;	/* SLOB */
+		int units;			/* zsmalloc */
 	};
 
 	/* Usage count. *DO NOT USE DIRECTLY*. See page_ref.h */
