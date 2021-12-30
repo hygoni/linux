@@ -1335,7 +1335,7 @@ static int mx3fb_map_video_memory(struct fb_info *fbi, unsigned int mem_len,
 	dma_addr_t addr;
 
 	fbi->screen_base = dma_alloc_wc(fbi->device, mem_len, &addr,
-					GFP_DMA | GFP_KERNEL);
+					GFP_KERNEL);
 
 	if (!fbi->screen_base) {
 		dev_err(fbi->device, "Cannot allocate %u bytes framebuffer memory\n",
