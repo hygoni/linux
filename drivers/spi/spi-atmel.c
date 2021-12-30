@@ -1522,14 +1522,14 @@ static int atmel_spi_probe(struct platform_device *pdev)
 		as->addr_rx_bbuf = dma_alloc_coherent(&pdev->dev,
 						      SPI_MAX_DMA_XFER,
 						      &as->dma_addr_rx_bbuf,
-						      GFP_KERNEL | GFP_DMA);
+						      GFP_KERNEL);
 		if (!as->addr_rx_bbuf) {
 			as->use_dma = false;
 		} else {
 			as->addr_tx_bbuf = dma_alloc_coherent(&pdev->dev,
 					SPI_MAX_DMA_XFER,
 					&as->dma_addr_tx_bbuf,
-					GFP_KERNEL | GFP_DMA);
+					GFP_KERNEL);
 			if (!as->addr_tx_bbuf) {
 				as->use_dma = false;
 				dma_free_coherent(&pdev->dev, SPI_MAX_DMA_XFER,
