@@ -168,7 +168,7 @@ static int pruss_probe(struct platform_device *pdev)
 	}
 
 	gdev->ddr_vaddr = dma_alloc_coherent(dev, extram_pool_sz,
-				&(gdev->ddr_paddr), GFP_KERNEL | GFP_DMA);
+				&(gdev->ddr_paddr), GFP_KERNEL);
 	if (!gdev->ddr_vaddr) {
 		dev_err(dev, "Could not allocate external memory\n");
 		ret = -ENOMEM;
