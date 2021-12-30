@@ -1426,7 +1426,7 @@ static int fb_probe(struct platform_device *device)
 	par->vram_virt = dmam_alloc_coherent(par->dev,
 					     par->vram_size,
 					     &par->vram_phys,
-					     GFP_KERNEL | GFP_DMA);
+					     GFP_KERNEL);
 	if (!par->vram_virt) {
 		dev_err(&device->dev,
 			"GLCD: kmalloc for frame buffer failed\n");
@@ -1446,7 +1446,7 @@ static int fb_probe(struct platform_device *device)
 	/* allocate palette buffer */
 	par->v_palette_base = dmam_alloc_coherent(par->dev, PALETTE_SIZE,
 						  &par->p_palette_base,
-						  GFP_KERNEL | GFP_DMA);
+						  GFP_KERNEL);
 	if (!par->v_palette_base) {
 		dev_err(&device->dev,
 			"GLCD: kmalloc for palette buffer failed\n");
