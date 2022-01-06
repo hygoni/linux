@@ -860,26 +860,45 @@ static int marvell_nfc_xfer_data_dma(struct marvell_nfc *nfc,
 	struct dma_async_tx_descriptor *tx;
 	struct scatterlist sg;
 	dma_cookie_t cookie;
-	int ret;
+	dma_addr_t dma_handle;
+	int ret = 0;
 
 	marvell_nfc_enable_dma(nfc);
+
+	/*
+	 * DMA must act on length multiple of 32 and this length may be
+	 * bigger than the destination buffer. Use this buffer instead
+	 * for DMA transfers and then copy the desired amount of data to
+	 * the provided buffer.
+	 */
+	nfc->dma_buf = dma_alloc_noncoherent(nfc->dev, MAX_CHUNK_SIZE,
+						&dma_handle,
+						direction,
+						GFP_ATOMIC);
+	if (!nfc->dma_buf) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+
 	/* Prepare the DMA transfer */
-	sg_init_one(&sg, nfc->dma_buf, dma_len);
-	dma_map_sg(nfc->dma_chan->device->dev, &sg, 1, direction);
-	tx = dmaengine_prep_slave_sg(nfc->dma_chan, &sg, 1,
+	tx = dmaengine_prep_slave_single(nfc->dma_chan, dma_handle, dma_len,
 				     direction == DMA_FROM_DEVICE ?
 				     DMA_DEV_TO_MEM : DMA_MEM_TO_DEV,
 				     DMA_PREP_INTERRUPT);
 	if (!tx) {
 		dev_err(nfc->dev, "Could not prepare DMA S/G list\n");
-		return -ENXIO;
+		ret = -ENXIO;
+		goto free;
 	}
 
 	/* Do the task and wait for it to finish */
 	cookie = dmaengine_submit(tx);
 	ret = dma_submit_error(cookie);
-	if (ret)
-		return -EIO;
+	if (ret) {
+		ret = -EIO;
+		goto free;
+	}
 
 	dma_async_issue_pending(nfc->dma_chan);
 	ret = marvell_nfc_wait_cmdd(nfc->selected_chip);
@@ -889,10 +908,16 @@ static int marvell_nfc_xfer_data_dma(struct marvell_nfc *nfc,
 		dev_err(nfc->dev, "Timeout waiting for DMA (status: %d)\n",
 			dmaengine_tx_status(nfc->dma_chan, cookie, NULL));
 		dmaengine_terminate_all(nfc->dma_chan);
-		return -ETIMEDOUT;
+		ret = -ETIMEDOUT;
+		goto free;
 	}
 
-	return 0;
+free:
+	dma_free_noncoherent(nfc->dev, MAX_CHUNK_SIZE, nfc->dma_buf,
+			     dma_handle, direction);
+
+out:
+	return ret;
 }
 
 static int marvell_nfc_xfer_data_in_pio(struct marvell_nfc *nfc, u8 *in,
@@ -2811,18 +2836,6 @@ static int marvell_nfc_init_dma(struct marvell_nfc *nfc)
 	ret = dmaengine_slave_config(nfc->dma_chan, &config);
 	if (ret < 0) {
 		dev_err(nfc->dev, "Failed to configure DMA channel\n");
-		goto release_channel;
-	}
-
-	/*
-	 * DMA must act on length multiple of 32 and this length may be
-	 * bigger than the destination buffer. Use this buffer instead
-	 * for DMA transfers and then copy the desired amount of data to
-	 * the provided buffer.
-	 */
-	nfc->dma_buf = kmalloc(MAX_CHUNK_SIZE, GFP_KERNEL | GFP_DMA);
-	if (!nfc->dma_buf) {
-		ret = -ENOMEM;
 		goto release_channel;
 	}
 
