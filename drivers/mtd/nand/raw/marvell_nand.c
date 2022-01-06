@@ -394,6 +394,7 @@ struct marvell_nfc_caps {
  * @use_dma:		Whetner DMA is used
  * @dma_chan:		DMA channel (NFCv1 only)
  * @dma_buf:		32-bit aligned buffer for DMA transfers (NFCv1 only)
+ * @dma_handle:         dma handle need for freeing dma buffer
  */
 struct marvell_nfc {
 	struct nand_controller controller;
@@ -411,6 +412,7 @@ struct marvell_nfc {
 	bool use_dma;
 	struct dma_chan *dma_chan;
 	u8 *dma_buf;
+	dma_addr_t dma_handle;
 };
 
 static inline struct marvell_nfc *to_marvell_nfc(struct nand_controller *ctrl)
@@ -2820,7 +2822,9 @@ static int marvell_nfc_init_dma(struct marvell_nfc *nfc)
 	 * for DMA transfers and then copy the desired amount of data to
 	 * the provided buffer.
 	 */
-	nfc->dma_buf = kmalloc(MAX_CHUNK_SIZE, GFP_KERNEL | GFP_DMA);
+	nfc->dma_buf = dma_alloc_noncoherent(nfc->dev, MAX_CHUNK_SIZE,
+						&nfc->dma_handle,
+						DMA_BIDIRECTIONAL, GFP_KERNEL);
 	if (!nfc->dma_buf) {
 		ret = -ENOMEM;
 		goto release_channel;
@@ -2979,8 +2983,11 @@ static int marvell_nfc_probe(struct platform_device *pdev)
 	return 0;
 
 release_dma:
-	if (nfc->use_dma)
+	if (nfc->use_dma) {
 		dma_release_channel(nfc->dma_chan);
+		dma_free_noncoherent(nfc->dev, MAX_CHUNK_SIZE, nfc->dma_buf,
+					nfc->dma_handle, DMA_BIDIRECTIONAL);
+	}
 unprepare_reg_clk:
 	clk_disable_unprepare(nfc->reg_clk);
 unprepare_core_clk:
@@ -2998,6 +3005,8 @@ static int marvell_nfc_remove(struct platform_device *pdev)
 	if (nfc->use_dma) {
 		dmaengine_terminate_all(nfc->dma_chan);
 		dma_release_channel(nfc->dma_chan);
+		dma_free_noncoherent(nfc->dev, MAX_CHUNK_SIZE, nfc->dma_buf,
+					nfc->dma_handle, DMA_BIDIRECTIONAL);
 	}
 
 	clk_disable_unprepare(nfc->reg_clk);
