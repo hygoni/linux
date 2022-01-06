@@ -1360,18 +1360,25 @@ static void wbsd_release_regions(struct wbsd_host *host)
 
 static void wbsd_request_dma(struct wbsd_host *host, int dma)
 {
+	dma_addr_t dma_handle;
+
 	if (dma < 0)
 		return;
 
 	if (request_dma(dma, DRIVER_NAME))
 		goto err;
 
+	dma_set_mask_and_coherent(mmc_dev(host->mmc), DMA_BIT_MASK(24));
+
 	/*
 	 * We need to allocate a special buffer in
 	 * order for ISA to be able to DMA to it.
 	 */
-	host->dma_buffer = kmalloc(WBSD_DMA_SIZE,
-		GFP_NOIO | GFP_DMA | __GFP_RETRY_MAYFAIL | __GFP_NOWARN);
+	host->dma_buffer = dma_alloc_noncoherent(mmc_dev(host->mmc),
+						WBSD_DMA_SIZE, &dma_handle,
+						DMA_BIDIRECTIONAL,
+						GFP_KERNEL);
+
 	if (!host->dma_buffer)
 		goto free;
 
@@ -1381,35 +1388,15 @@ static void wbsd_request_dma(struct wbsd_host *host, int dma)
 	host->dma_addr = dma_map_single(mmc_dev(host->mmc), host->dma_buffer,
 		WBSD_DMA_SIZE, DMA_BIDIRECTIONAL);
 	if (dma_mapping_error(mmc_dev(host->mmc), host->dma_addr))
-		goto kfree;
-
-	/*
-	 * ISA DMA must be aligned on a 64k basis.
-	 */
-	if ((host->dma_addr & 0xffff) != 0)
-		goto unmap;
-	/*
-	 * ISA cannot access memory above 16 MB.
-	 */
-	else if (host->dma_addr >= 0x1000000)
-		goto unmap;
+		goto dma_free;
 
 	host->dma = dma;
 
 	return;
 
-unmap:
-	/*
-	 * If we've gotten here then there is some kind of alignment bug
-	 */
-	BUG_ON(1);
-
-	dma_unmap_single(mmc_dev(host->mmc), host->dma_addr,
-		WBSD_DMA_SIZE, DMA_BIDIRECTIONAL);
-	host->dma_addr = 0;
-
-kfree:
-	kfree(host->dma_buffer);
+dma_free:
+	dma_free_noncoherent(mmc_dev(host->mmc), WBSD_DMA_SIZE, host->dma_buffer,
+				dma_handle, DMA_BIDIRECTIONAL)
 	host->dma_buffer = NULL;
 
 free:
@@ -1428,7 +1415,8 @@ static void wbsd_release_dma(struct wbsd_host *host)
 	if (host->dma_buffer) {
 		dma_unmap_single(mmc_dev(host->mmc), host->dma_addr,
 			WBSD_DMA_SIZE, DMA_BIDIRECTIONAL);
-		kfree(host->dma_buffer);
+		free_pages((unsigned long)host->dma_buf,
+			   get_order(WBSD_DMA_SIZE));
 	}
 	if (host->dma >= 0)
 		free_dma(host->dma);
