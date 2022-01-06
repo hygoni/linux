@@ -1088,12 +1088,16 @@ static void gpmi_free_dma_buffer(struct gpmi_nand_data *this)
 {
 	struct device *dev = this->dev;
 	struct bch_geometry *geo = &this->bch_geometry;
+	struct mtd_info *mtd = nand_to_mtd(&this->nand);
 
 	if (this->auxiliary_virt && virt_addr_valid(this->auxiliary_virt))
 		dma_free_coherent(dev, geo->auxiliary_size,
 					this->auxiliary_virt,
 					this->auxiliary_phys);
-	kfree(this->data_buffer_dma);
+	dma_free_noncoherent(dev, mtd->writesize ?: PAGE_SIZE,
+				this->data_buffer_dma,
+				this->dma_handle,
+				DMA_BIDIRECTIONAL);
 	kfree(this->raw_buffer);
 
 	this->data_buffer_dma	= NULL;
@@ -1115,13 +1119,17 @@ static int gpmi_alloc_dma_buffer(struct gpmi_nand_data *this)
 	 *     buffer of the real NAND page size when the gpmi_alloc_dma_buffer
 	 *     is called after.
 	 */
-	this->data_buffer_dma = kzalloc(mtd->writesize ?: PAGE_SIZE,
-					GFP_DMA | GFP_KERNEL);
+	this->data_buffer_dma =
+		dma_alloc_noncoherent(dev, mtd->writesize ?: PAGE_SIZE,
+					&this->dma_handle,
+					DMA_BIDIRECTIONAL,
+					GFP_KERNEL);
+
 	if (this->data_buffer_dma == NULL)
 		goto error_alloc;
 
 	this->auxiliary_virt = dma_alloc_coherent(dev, geo->auxiliary_size,
-					&this->auxiliary_phys, GFP_DMA);
+					&this->auxiliary_phys, GFP_KERNEL);
 	if (!this->auxiliary_virt)
 		goto error_alloc;
 

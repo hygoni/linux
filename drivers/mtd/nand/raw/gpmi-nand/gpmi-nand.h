@@ -145,6 +145,7 @@ struct gpmi_nand_data {
 	uint32_t		bch_flashlayout1;
 
 	char			*data_buffer_dma;
+	dma_addr_t		dma_handle;
 
 	void			*auxiliary_virt;
 	dma_addr_t		auxiliary_phys;
