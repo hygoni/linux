@@ -661,19 +661,13 @@ static int ish_fw_xfer_direct_dma(struct ishtp_cl_data *client_data,
 	 */
 	payload_max_size &= ~(L1_CACHE_BYTES - 1);
 
-	dma_buf = kmalloc(payload_max_size, GFP_KERNEL | GFP_DMA32);
+	dma_buf = dma_alloc_noncoherent(devc, get_order(payload_max_size),
+				        &dma_buf_phy, DMA_TO_DEVICE,
+					GFP_KERNEL);
 	if (!dma_buf) {
+		dev_err(cl_data_to_dev(client_data), "DMA alloc failed\n");
 		client_data->flag_retry = true;
 		return -ENOMEM;
-	}
-
-	dma_buf_phy = dma_map_single(devc, dma_buf, payload_max_size,
-				     DMA_TO_DEVICE);
-	if (dma_mapping_error(devc, dma_buf_phy)) {
-		dev_err(cl_data_to_dev(client_data), "DMA map failed\n");
-		client_data->flag_retry = true;
-		rv = -ENOMEM;
-		goto end_err_dma_buf_release;
 	}
 
 	ldr_xfer_dma_frag.fragment.hdr.command = LOADER_CMD_XFER_FRAGMENT;
@@ -725,15 +719,14 @@ static int ish_fw_xfer_direct_dma(struct ishtp_cl_data *client_data,
 		fragment_offset += fragment_size;
 	}
 
-	dma_unmap_single(devc, dma_buf_phy, payload_max_size, DMA_TO_DEVICE);
-	kfree(dma_buf);
+	dma_free_noncoherent(devc, get_order(payload_max_size), dma_buf,
+			     dma_buf_phy, DMA_TO_DEVICE);
 	return 0;
 
 end_err_resp_buf_release:
 	/* Free ISH buffer if not done already, in error case */
-	dma_unmap_single(devc, dma_buf_phy, payload_max_size, DMA_TO_DEVICE);
-end_err_dma_buf_release:
-	kfree(dma_buf);
+	dma_free_noncoherent(devc, get_order(payload_max_size), dma_buf,
+			     dma_buf_phy, DMA_TO_DEVICE);
 	return rv;
 }
 
