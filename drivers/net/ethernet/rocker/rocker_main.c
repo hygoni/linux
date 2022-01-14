@@ -193,19 +193,16 @@ static int rocker_dma_test_offset(const struct rocker *rocker,
 	int i;
 	int err;
 
-	alloc = kzalloc(ROCKER_TEST_DMA_BUF_SIZE * 2 + offset,
-			GFP_KERNEL | GFP_DMA);
+	alloc = dma_alloc_noncoherent(&pdev->dev,
+				ROCKER_TEST_DMA_BUF_SIZE * 2 + offset,
+				&dma_handle,
+				DMA_BIDIRECTIONAL,
+				GFP_KERNEL);
 	if (!alloc)
 		return -ENOMEM;
+
 	buf = alloc + offset;
 	expect = buf + ROCKER_TEST_DMA_BUF_SIZE;
-
-	dma_handle = dma_map_single(&pdev->dev, buf, ROCKER_TEST_DMA_BUF_SIZE,
-				    DMA_BIDIRECTIONAL);
-	if (dma_mapping_error(&pdev->dev, dma_handle)) {
-		err = -EIO;
-		goto free_alloc;
-	}
 
 	rocker_write64(rocker, TEST_DMA_ADDR, dma_handle);
 	rocker_write32(rocker, TEST_DMA_SIZE, ROCKER_TEST_DMA_BUF_SIZE);
@@ -215,14 +212,14 @@ static int rocker_dma_test_offset(const struct rocker *rocker,
 				  dma_handle, buf, expect,
 				  ROCKER_TEST_DMA_BUF_SIZE);
 	if (err)
-		goto unmap;
+		goto free;
 
 	memset(expect, 0, ROCKER_TEST_DMA_BUF_SIZE);
 	err = rocker_dma_test_one(rocker, wait, ROCKER_TEST_DMA_CTRL_CLEAR,
 				  dma_handle, buf, expect,
 				  ROCKER_TEST_DMA_BUF_SIZE);
 	if (err)
-		goto unmap;
+		goto free;
 
 	prandom_bytes(buf, ROCKER_TEST_DMA_BUF_SIZE);
 	for (i = 0; i < ROCKER_TEST_DMA_BUF_SIZE; i++)
@@ -231,14 +228,11 @@ static int rocker_dma_test_offset(const struct rocker *rocker,
 				  dma_handle, buf, expect,
 				  ROCKER_TEST_DMA_BUF_SIZE);
 	if (err)
-		goto unmap;
+		goto free;
 
-unmap:
-	dma_unmap_single(&pdev->dev, dma_handle, ROCKER_TEST_DMA_BUF_SIZE,
-			 DMA_BIDIRECTIONAL);
-free_alloc:
-	kfree(alloc);
-
+free:
+	dma_free_noncoherent(&pdev->dev, ROCKER_TEST_DMA_BUF_SIZE * 2 + offset,
+			     alloc, dma_handle, DMA_BIDIRECTIONAL);
 	return err;
 }
 
@@ -500,17 +494,10 @@ static int rocker_dma_ring_bufs_alloc(const struct rocker *rocker,
 		dma_addr_t dma_handle;
 		char *buf;
 
-		buf = kzalloc(buf_size, GFP_KERNEL | GFP_DMA);
+		buf = dma_alloc_noncoherent(&pdev->dev, buf_size,
+				&dma_handle, direction, GFP_KERNEL);
 		if (!buf) {
 			err = -ENOMEM;
-			goto rollback;
-		}
-
-		dma_handle = dma_map_single(&pdev->dev, buf, buf_size,
-					    direction);
-		if (dma_mapping_error(&pdev->dev, dma_handle)) {
-			kfree(buf);
-			err = -EIO;
 			goto rollback;
 		}
 
@@ -526,11 +513,10 @@ static int rocker_dma_ring_bufs_alloc(const struct rocker *rocker,
 rollback:
 	for (i--; i >= 0; i--) {
 		const struct rocker_desc_info *desc_info = &info->desc_info[i];
-
-		dma_unmap_single(&pdev->dev,
-				 dma_unmap_addr(desc_info, mapaddr),
-				 desc_info->data_size, direction);
-		kfree(desc_info->data);
+		dma_free_noncoherent(&pdev->dev, desc_info->data_size,
+				     desc_info->data,
+				     dma_unmap_addr(desc_info, mapaddr),
+				     direction);
 	}
 	return err;
 }
@@ -548,10 +534,11 @@ static void rocker_dma_ring_bufs_free(const struct rocker *rocker,
 
 		desc->buf_addr = 0;
 		desc->buf_size = 0;
-		dma_unmap_single(&pdev->dev,
-				 dma_unmap_addr(desc_info, mapaddr),
-				 desc_info->data_size, direction);
-		kfree(desc_info->data);
+		dma_free_noncoherent(&pdev->dev,
+				     desc_info->data_size,
+				     desc_info->data,
+				     dma_unmap_addr(desc_info, mapaddr),
+				     direction);
 	}
 }
 
