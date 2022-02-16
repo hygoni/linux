@@ -2975,6 +2975,9 @@ load_freelist:
 	c->freelist = get_freepointer(s, freelist);
 	c->tid = next_tid(c->tid);
 	local_unlock_irqrestore(&s->cpu_slab->lock, flags);
+
+	if (IS_ENABLED(CONFIG_SLUB_MEMORY_EFFICIENT))
+		deactivate_slab(s, slab, freelist);
 	return freelist;
 
 deactivate_slab:
@@ -3134,7 +3137,7 @@ static __always_inline void maybe_wipe_obj_freeptr(struct kmem_cache *s,
  *
  * Otherwise we can simply pick the next object from the lockless free list.
  */
-static __always_inline void *slab_alloc_node(struct kmem_cache *s,
+static noinline void *slab_alloc_node(struct kmem_cache *s,
 		gfp_t gfpflags, int node, unsigned long addr, size_t orig_size)
 {
 	void *object;
@@ -3434,7 +3437,7 @@ slab_empty:
  * same slab) possible by specifying head and tail ptr, plus objects
  * count (cnt). Bulk free indicated by tail pointer being set.
  */
-static __always_inline void do_slab_free(struct kmem_cache *s,
+static noinline void do_slab_free(struct kmem_cache *s,
 				struct slab *slab, void *head, void *tail,
 				int cnt, unsigned long addr)
 {
