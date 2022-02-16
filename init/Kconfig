@@ -1984,9 +1984,18 @@ config SHUFFLE_PAGE_ALLOCATOR
 
 	  Say Y if unsure.
 
+config SLUB_MEMORY_EFFICIENT
+	default n
+	depends on SLUB
+	bool "SLUB for low memory systems"
+	help
+	  SLUB holds partial slabs for each cpu and node for performance
+	  even if they are empty. Select this option if memory efficiency
+	  is more important than allocation performance.
+
 config SLUB_CPU_PARTIAL
 	default y
-	depends on SLUB && SMP
+	depends on SLUB && SMP && !SLUB_MEMORY_EFFICIENT
 	bool "SLUB per cpu partial cache"
 	help
 	  Per cpu partial caches accelerate objects allocation and freeing

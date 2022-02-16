@@ -223,6 +223,7 @@ static inline bool kmem_cache_has_cpu_partial(struct kmem_cache *s)
  */
 #define MIN_PARTIAL 5
 
+
 /*
  * Maximum number of desirable partial slabs.
  * The existence of more partial slabs makes kmem_cache_shrink
@@ -2419,7 +2420,9 @@ redo:
 
 	new.frozen = 0;
 
-	if (!new.inuse && n->nr_partial >= s->min_partial)
+	if (!new.inuse &&
+			(IS_ENABLED(CONFIG_SLUB_MEMORY_EFFICIENT) ||
+			 (n->nr_partial >= s->min_partial)))
 		m = M_FREE;
 	else if (new.freelist) {
 		m = M_PARTIAL;
@@ -3382,7 +3385,9 @@ static void __slab_free(struct kmem_cache *s, struct slab *slab,
 		return;
 	}
 
-	if (unlikely(!new.inuse && n->nr_partial >= s->min_partial))
+	if (!new.inuse &&
+			(IS_ENABLED(CONFIG_SLUB_MEMORY_EFFICIENT) ||
+			 (n->nr_partial >= s->min_partial)))
 		goto slab_empty;
 
 	/*
@@ -3759,7 +3764,11 @@ EXPORT_SYMBOL(kmem_cache_alloc_bulk);
  * take the list_lock.
  */
 static unsigned int slub_min_order;
+#ifdef CONFIG_SLUB_MEMORY_EFFICIENT
+static unsigned int slub_max_order = 0;
+#else
 static unsigned int slub_max_order = PAGE_ALLOC_COSTLY_ORDER;
+#endif
 static unsigned int slub_min_objects;
 
 /*
