@@ -235,6 +235,7 @@ static void kmem_cache_node_init(struct kmem_cache_node *parent)
 	parent->alien = NULL;
 	parent->colour_next = 0;
 	spin_lock_init(&parent->list_lock);
+	spin_lock_init(&parent->shared_array_lock);
 	parent->free_objects = 0;
 	parent->free_touched = 0;
 }
@@ -699,18 +700,18 @@ static void __drain_alien_cache(struct kmem_cache *cachep,
 	struct kmem_cache_node *n = get_node(cachep, node);
 
 	if (ac->avail) {
-		spin_lock(&n->list_lock);
 		/*
 		 * Stuff objects into the remote nodes shared array first.
 		 * That way we could avoid the overhead of putting the objects
 		 * into the free lists and getting them back later.
 		 */
+		spin_lock(&n->shared_array_lock);
 		if (n->shared)
 			transfer_objects(n->shared, ac, ac->limit);
+		spin_unlock(&n->shared_array_lock);
 
 		free_block(cachep, ac->entry, ac->avail, node, list);
 		ac->avail = 0;
-		spin_unlock(&n->list_lock);
 	}
 }
 
@@ -980,12 +981,14 @@ static void cpuup_canceled(long cpu)
 			goto free_slab;
 		}
 
+		spin_lock(&n->shared_array_lock);
 		shared = n->shared;
 		if (shared) {
 			free_block(cachep, shared->entry,
 				   shared->avail, node, &list);
 			n->shared = NULL;
 		}
+		spin_unlock(&n->shared_array_lock);
 
 		alien = n->alien;
 		n->alien = NULL;
@@ -1175,6 +1178,7 @@ static void __init init_list(struct kmem_cache *cachep, struct kmem_cache_node *
 	 * Do not assume that spinlocks can be initialized via memcpy:
 	 */
 	spin_lock_init(&ptr->list_lock);
+	spin_lock_init(&ptr->shared_array_lock);
 
 	MAKE_ALL_LISTS(cachep, ptr, nodeid);
 	cachep->node[nodeid] = ptr;
@@ -2179,7 +2183,9 @@ static void drain_cpu_caches(struct kmem_cache *cachep)
 
 	for_each_kmem_cache_node(cachep, node, n) {
 		spin_lock_irq(&n->list_lock);
+		spin_lock_irq(&n->shared_array_lock);
 		drain_array_locked(cachep, n->shared, node, true, &list);
+		spin_unlock_irq(&n->shared_array_lock);
 		spin_unlock_irq(&n->list_lock);
 
 		slabs_destroy(cachep, &list);
@@ -2896,6 +2902,7 @@ static void *cache_alloc_refill(struct kmem_cache *cachep, gfp_t flags)
 	int node;
 	void *list = NULL;
 	struct slab *slab;
+	int transferred;
 
 	check_irq_off();
 	node = numa_mem_id();
@@ -2917,15 +2924,20 @@ static void *cache_alloc_refill(struct kmem_cache *cachep, gfp_t flags)
 	if (!n->free_objects && (!shared || !shared->avail))
 		goto direct_grow;
 
-	spin_lock(&n->list_lock);
+	spin_lock(&n->shared_array_lock);
 	shared = READ_ONCE(n->shared);
-
 	/* See if we can refill from the shared array */
-	if (shared && transfer_objects(ac, shared, batchcount)) {
-		shared->touched = 1;
-		goto alloc_done;
+	if (shared) {
+		transferred = transfer_objects(ac, shared, batchcount);
+		if (transferred) {
+			shared->touched = 1;
+			spin_unlock(&n->shared_array_lock);
+			goto alloc_done;
+		}
 	}
+	spin_unlock(&n->shared_array_lock);
 
+	spin_lock(&n->list_lock);
 	while (batchcount > 0) {
 		/* Get slab alloc is to come from. */
 		slab = get_first_slab(n, false);
@@ -2940,8 +2952,8 @@ static void *cache_alloc_refill(struct kmem_cache *cachep, gfp_t flags)
 
 must_grow:
 	n->free_objects -= ac->avail;
-alloc_done:
 	spin_unlock(&n->list_lock);
+alloc_done:
 	fixup_objfreelist_debug(cachep, &list);
 
 direct_grow:
@@ -3375,36 +3387,43 @@ static void cache_flusharray(struct kmem_cache *cachep, struct array_cache *ac)
 
 	check_irq_off();
 	n = get_node(cachep, node);
-	spin_lock(&n->list_lock);
 	if (n->shared) {
-		struct array_cache *shared_array = n->shared;
-		int max = shared_array->limit - shared_array->avail;
+		struct array_cache *shared_array;
+		int max;
+
+		spin_lock(&n->shared_array_lock);
+		shared_array = n->shared;
+		max = shared_array->limit - shared_array->avail;
 		if (max) {
 			if (batchcount > max)
 				batchcount = max;
 			memcpy(&(shared_array->entry[shared_array->avail]),
 			       ac->entry, sizeof(void *) * batchcount);
 			shared_array->avail += batchcount;
+			spin_unlock(&n->shared_array_lock);
 			goto free_done;
 		}
+		spin_unlock(&n->shared_array_lock);
 	}
 
+	spin_lock(&n->list_lock);
 	free_block(cachep, ac->entry, batchcount, node, &list);
+	spin_unlock(&n->list_lock);
 free_done:
 #if STATS
 	{
 		int i = 0;
 		struct slab *slab;
-
+		spin_lock(&n->list_lock);
 		list_for_each_entry(slab, &n->slabs_free, slab_list) {
 			BUG_ON(slab->active);
 
 			i++;
 		}
+		spin_unlock(&n->list_lock);
 		STATS_SET_FREEABLE(cachep, i);
 	}
 #endif
-	spin_unlock(&n->list_lock);
 	ac->avail -= batchcount;
 	memmove(ac->entry, &(ac->entry[batchcount]), sizeof(void *)*ac->avail);
 	slabs_destroy(cachep, &list);
@@ -3943,14 +3962,12 @@ end:
 
 /*
  * Drain an array if it contains any elements taking the node lock only if
- * necessary. Note that the node listlock also protects the array_cache
- * if drain_array() is used on the shared array.
+ * necessary.
  */
 static void drain_array(struct kmem_cache *cachep, struct kmem_cache_node *n,
-			 struct array_cache *ac, int node)
+			 struct array_cache *ac, int node, bool is_shared_array)
 {
 	LIST_HEAD(list);
-
 	/* ac from n->shared can be freed if we don't hold the slab_mutex. */
 	check_mutex_acquired();
 
@@ -3963,7 +3980,12 @@ static void drain_array(struct kmem_cache *cachep, struct kmem_cache_node *n,
 	}
 
 	spin_lock_irq(&n->list_lock);
-	drain_array_locked(cachep, ac, node, false, &list);
+	if (is_shared_array) {
+		spin_lock(&n->shared_array_lock);
+		drain_array_locked(cachep, ac, node, false, &list);
+		spin_unlock(&n->shared_array_lock);
+	} else
+		drain_array_locked(cachep, ac, node, false, &list);
 	spin_unlock_irq(&n->list_lock);
 
 	slabs_destroy(cachep, &list);
@@ -4004,7 +4026,7 @@ static void cache_reap(struct work_struct *w)
 
 		reap_alien(searchp, n);
 
-		drain_array(searchp, n, cpu_cache_get(searchp), node);
+		drain_array(searchp, n, cpu_cache_get(searchp), node, false);
 
 		/*
 		 * These are racy checks but it does not matter
@@ -4015,7 +4037,7 @@ static void cache_reap(struct work_struct *w)
 
 		n->next_reap = jiffies + REAPTIMEOUT_NODE;
 
-		drain_array(searchp, n, n->shared, node);
+		drain_array(searchp, n, n->shared, node, true);
 
 		if (n->free_touched)
 			n->free_touched = 0;
