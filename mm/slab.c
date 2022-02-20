@@ -187,16 +187,12 @@ struct array_cache {
 	unsigned int limit;
 	unsigned int batchcount;
 	unsigned int touched;
+	spinlock_t lock;
 	void *entry[];	/*
 			 * Must have this definition in here for the proper
 			 * alignment of array_cache. Also simplifies accessing
 			 * the entries.
 			 */
-};
-
-struct alien_cache {
-	spinlock_t lock;
-	struct array_cache ac;
 };
 
 /*
@@ -604,13 +600,13 @@ static __always_inline void __free_one(struct array_cache *ac, void *objp)
 #define drain_alien_cache(cachep, alien) do { } while (0)
 #define reap_alien(cachep, n) do { } while (0)
 
-static inline struct alien_cache **alloc_alien_cache(int node,
+static inline struct array_cache **alloc_alien_cache(int node,
 						int limit, gfp_t gfp)
 {
 	return NULL;
 }
 
-static inline void free_alien_cache(struct alien_cache **ac_ptr)
+static inline void free_alien_cache(struct array_cache **ac_ptr)
 {
 }
 
@@ -641,24 +637,24 @@ static inline gfp_t gfp_exact_node(gfp_t flags)
 static void *____cache_alloc_node(struct kmem_cache *, gfp_t, int);
 static void *alternate_node_alloc(struct kmem_cache *, gfp_t);
 
-static struct alien_cache *__alloc_alien_cache(int node, int entries,
+static struct array_cache *__alloc_alien_cache(int node, int entries,
 						int batch, gfp_t gfp)
 {
-	size_t memsize = sizeof(void *) * entries + sizeof(struct alien_cache);
-	struct alien_cache *alc = NULL;
+	size_t memsize = sizeof(void *) * entries + sizeof(struct array_cache);
+	struct array_cache *ac = NULL;
 
-	alc = kmalloc_node(memsize, gfp, node);
-	if (alc) {
-		kmemleak_no_scan(alc);
-		init_arraycache(&alc->ac, entries, batch);
-		spin_lock_init(&alc->lock);
+	ac = kmalloc_node(memsize, gfp, node);
+	if (ac) {
+		kmemleak_no_scan(ac);
+		init_arraycache(ac, entries, batch);
+		spin_lock_init(&ac->lock);
 	}
-	return alc;
+	return ac;
 }
 
-static struct alien_cache **alloc_alien_cache(int node, int limit, gfp_t gfp)
+static struct array_cache **alloc_alien_cache(int node, int limit, gfp_t gfp)
 {
-	struct alien_cache **alc_ptr;
+	struct array_cache **alc_ptr;
 	int i;
 
 	if (limit > 1)
@@ -681,7 +677,7 @@ static struct alien_cache **alloc_alien_cache(int node, int limit, gfp_t gfp)
 	return alc_ptr;
 }
 
-static void free_alien_cache(struct alien_cache **alc_ptr)
+static void free_alien_cache(struct array_cache **alc_ptr)
 {
 	int i;
 
@@ -722,39 +718,32 @@ static void reap_alien(struct kmem_cache *cachep, struct kmem_cache_node *n)
 	int node = __this_cpu_read(slab_reap_node);
 
 	if (n->alien) {
-		struct alien_cache *alc = n->alien[node];
-		struct array_cache *ac;
+		struct array_cache *ac = n->alien[node];
+		if (ac->avail && spin_trylock_irq(&ac->lock)) {
+			LIST_HEAD(list);
 
-		if (alc) {
-			ac = &alc->ac;
-			if (ac->avail && spin_trylock_irq(&alc->lock)) {
-				LIST_HEAD(list);
-
-				__drain_alien_cache(cachep, ac, node, &list);
-				spin_unlock_irq(&alc->lock);
-				slabs_destroy(cachep, &list);
-			}
+			__drain_alien_cache(cachep, ac, node, &list);
+			spin_unlock_irq(&ac->lock);
+			slabs_destroy(cachep, &list);
 		}
 	}
 }
 
 static void drain_alien_cache(struct kmem_cache *cachep,
-				struct alien_cache **alien)
+				struct array_cache **alien)
 {
 	int i = 0;
-	struct alien_cache *alc;
 	struct array_cache *ac;
 	unsigned long flags;
 
 	for_each_online_node(i) {
-		alc = alien[i];
-		if (alc) {
+		ac = alien[i];
+		if (ac) {
 			LIST_HEAD(list);
 
-			ac = &alc->ac;
-			spin_lock_irqsave(&alc->lock, flags);
+			spin_lock_irqsave(&ac->lock, flags);
 			__drain_alien_cache(cachep, ac, i, &list);
-			spin_unlock_irqrestore(&alc->lock, flags);
+			spin_unlock_irqrestore(&ac->lock, flags);
 			slabs_destroy(cachep, &list);
 		}
 	}
@@ -764,22 +753,20 @@ static int __cache_free_alien(struct kmem_cache *cachep, void *objp,
 				int node, int slab_node)
 {
 	struct kmem_cache_node *n;
-	struct alien_cache *alien = NULL;
 	struct array_cache *ac;
 	LIST_HEAD(list);
 
 	n = get_node(cachep, node);
 	STATS_INC_NODEFREES(cachep);
 	if (n->alien && n->alien[slab_node]) {
-		alien = n->alien[slab_node];
-		ac = &alien->ac;
-		spin_lock(&alien->lock);
+		ac = n->alien[slab_node];
+		spin_lock(&ac->lock);
 		if (unlikely(ac->avail == ac->limit)) {
 			STATS_INC_ACOVERFLOW(cachep);
 			__drain_alien_cache(cachep, ac, slab_node, &list);
 		}
 		__free_one(ac, objp);
-		spin_unlock(&alien->lock);
+		spin_unlock(&ac->lock);
 		slabs_destroy(cachep, &list);
 	} else {
 		n = get_node(cachep, slab_node);
@@ -887,7 +874,7 @@ static int setup_kmem_cache_node(struct kmem_cache *cachep,
 	struct kmem_cache_node *n;
 	struct array_cache *old_shared = NULL;
 	struct array_cache *new_shared = NULL;
-	struct alien_cache **new_alien = NULL;
+	struct array_cache **new_alien = NULL;
 	LIST_HEAD(list);
 
 	if (use_alien_caches) {
@@ -958,7 +945,7 @@ static void cpuup_canceled(long cpu)
 	list_for_each_entry(cachep, &slab_caches, list) {
 		struct array_cache *nc;
 		struct array_cache *shared;
-		struct alien_cache **alien;
+		struct array_cache **alien;
 		LIST_HEAD(list);
 
 		n = get_node(cachep, node);
