@@ -2467,6 +2467,14 @@ config BITS_TEST
 
 	  If unsure, say N.
 
+config SLAB_COMMON_KUNIT_TEST
+	tristate "KUnit test for common slab functions" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  This builds slab unit test.
+	  If unsure, say N.
+
 config SLUB_KUNIT_TEST
 	tristate "KUnit test for SLUB cache error detection" if !KUNIT_ALL_TESTS
 	depends on SLUB_DEBUG && KUNIT
