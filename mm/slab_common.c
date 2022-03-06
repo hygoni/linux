@@ -956,7 +956,8 @@ void *kmalloc_large(size_t size, gfp_t flags)
 }
 EXPORT_SYMBOL(kmalloc_large);
 
-void *kmalloc_large_node(size_t size, gfp_t flags, int node)
+static __always_inline
+void *__kmalloc_large_node_notrace(size_t size, gfp_t flags, int node)
 {
 	struct page *page;
 	void *ptr = NULL;
@@ -975,6 +976,20 @@ void *kmalloc_large_node(size_t size, gfp_t flags, int node)
 	kmemleak_alloc(ptr, size, 1, flags);
 
 	return ptr;
+}
+
+void *kmalloc_large_node_notrace(size_t size, gfp_t flags, int node)
+{
+	return __kmalloc_large_node_notrace(size, flags, node);
+}
+
+void *kmalloc_large_node(size_t size, gfp_t flags, int node)
+{
+	void *ret = __kmalloc_large_node_notrace(size, flags, node);
+
+	trace_kmalloc_node(_RET_IP_, ret, NULL, size,
+			   PAGE_SIZE << get_order(size), flags, node);
+	return ret;
 }
 EXPORT_SYMBOL(kmalloc_large_node);
 
