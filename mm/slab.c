@@ -3201,60 +3201,6 @@ must_grow:
 }
 
 static __always_inline void *
-slab_alloc_node(struct kmem_cache *cachep, gfp_t flags, int nodeid, size_t orig_size,
-		   unsigned long caller)
-{
-	unsigned long save_flags;
-	void *ptr;
-	int slab_node = numa_mem_id();
-	struct obj_cgroup *objcg = NULL;
-	bool init = false;
-
-	flags &= gfp_allowed_mask;
-	cachep = slab_pre_alloc_hook(cachep, &objcg, 1, flags);
-	if (unlikely(!cachep))
-		return NULL;
-
-	ptr = kfence_alloc(cachep, orig_size, flags);
-	if (unlikely(ptr))
-		goto out_hooks;
-
-	cache_alloc_debugcheck_before(cachep, flags);
-	local_irq_save(save_flags);
-
-	if (nodeid == NUMA_NO_NODE)
-		nodeid = slab_node;
-
-	if (unlikely(!get_node(cachep, nodeid))) {
-		/* Node not bootstrapped yet */
-		ptr = fallback_alloc(cachep, flags);
-		goto out;
-	}
-
-	if (nodeid == slab_node) {
-		/*
-		 * Use the locally cached objects if possible.
-		 * However ____cache_alloc does not allow fallback
-		 * to other nodes. It may fail while we still have
-		 * objects on other nodes available.
-		 */
-		ptr = ____cache_alloc(cachep, flags);
-		if (ptr)
-			goto out;
-	}
-	/* ___cache_alloc_node can fall back to other nodes */
-	ptr = ____cache_alloc_node(cachep, flags, nodeid);
-  out:
-	local_irq_restore(save_flags);
-	ptr = cache_alloc_debugcheck_after(cachep, flags, ptr, caller);
-	init = slab_want_init_on_alloc(flags, cachep);
-
-out_hooks:
-	slab_post_alloc_hook(cachep, objcg, flags, 1, &ptr, init);
-	return ptr;
-}
-
-static __always_inline void *
 __do_cache_alloc(struct kmem_cache *cache, gfp_t flags)
 {
 	void *objp;
@@ -3283,14 +3229,24 @@ __do_cache_alloc(struct kmem_cache *cachep, gfp_t flags)
 {
 	return ____cache_alloc(cachep, flags);
 }
-
 #endif /* CONFIG_NUMA */
 
+static __always_inline bool node_match(int nodeid, int slab_node)
+{
+#ifdef CONFIG_NUMA
+	if (nodeid != NUMA_NO_NODE && nodeid != slab_node)
+		return false;
+#endif
+	return true;
+}
+
 static __always_inline void *
-slab_alloc(struct kmem_cache *cachep, gfp_t flags, size_t orig_size, unsigned long caller)
+slab_alloc_node(struct kmem_cache *cachep, gfp_t flags, int nodeid, size_t orig_size,
+		   unsigned long caller)
 {
 	unsigned long save_flags;
-	void *objp;
+	void *ptr;
+	int slab_node = numa_mem_id();
 	struct obj_cgroup *objcg = NULL;
 	bool init = false;
 
@@ -3299,21 +3255,49 @@ slab_alloc(struct kmem_cache *cachep, gfp_t flags, size_t orig_size, unsigned lo
 	if (unlikely(!cachep))
 		return NULL;
 
-	objp = kfence_alloc(cachep, orig_size, flags);
-	if (unlikely(objp))
-		goto out;
+	ptr = kfence_alloc(cachep, orig_size, flags);
+	if (unlikely(ptr))
+		goto out_hooks;
 
 	cache_alloc_debugcheck_before(cachep, flags);
 	local_irq_save(save_flags);
-	objp = __do_cache_alloc(cachep, flags);
+
+	if (node_match(nodeid, slab_node)) {
+		/*
+		 * Use the locally cached objects if possible.
+		 * However ____cache_alloc does not allow fallback
+		 * to other nodes. It may fail while we still have
+		 * objects on other nodes available.
+		 */
+		ptr = ____cache_alloc(cachep, flags);
+		if (ptr)
+			goto out;
+	}
+#ifdef CONFIG_NUMA
+	else if (unlikely(!get_node(cachep, nodeid))) {
+		/* Node not bootstrapped yet */
+		ptr = fallback_alloc(cachep, flags);
+		goto out;
+	}
+
+	/* ___cache_alloc_node can fall back to other nodes */
+	ptr = ____cache_alloc_node(cachep, flags, nodeid);
+#endif
+out:
 	local_irq_restore(save_flags);
-	objp = cache_alloc_debugcheck_after(cachep, flags, objp, caller);
-	prefetchw(objp);
+	ptr = cache_alloc_debugcheck_after(cachep, flags, ptr, caller);
+	prefetchw(ptr);
 	init = slab_want_init_on_alloc(flags, cachep);
 
-out:
-	slab_post_alloc_hook(cachep, objcg, flags, 1, &objp, init);
-	return objp;
+out_hooks:
+	slab_post_alloc_hook(cachep, objcg, flags, 1, &ptr, init);
+	return ptr;
+}
+
+static __always_inline void *
+slab_alloc(struct kmem_cache *cachep, gfp_t flags, size_t orig_size, unsigned long caller)
+{
+	return slab_alloc_node(cachep, flags, NUMA_NO_NODE, orig_size, caller);
 }
 
 /*
