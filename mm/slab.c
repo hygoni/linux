@@ -3519,7 +3519,6 @@ error:
 }
 EXPORT_SYMBOL(kmem_cache_alloc_bulk);
 
-#ifdef CONFIG_TRACING
 void *
 kmem_cache_alloc_trace(struct kmem_cache *cachep, gfp_t flags, size_t size)
 {
@@ -3533,7 +3532,6 @@ kmem_cache_alloc_trace(struct kmem_cache *cachep, gfp_t flags, size_t size)
 	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc_trace);
-#endif
 
 /**
  * kmem_cache_alloc_node - Allocate an object on the specified node
@@ -3560,7 +3558,6 @@ void *kmem_cache_alloc_node(struct kmem_cache *cachep, gfp_t flags, int nodeid)
 }
 EXPORT_SYMBOL(kmem_cache_alloc_node);
 
-#ifdef CONFIG_TRACING
 void *kmem_cache_alloc_node_trace(struct kmem_cache *cachep,
 				  gfp_t flags,
 				  int nodeid,
@@ -3577,7 +3574,6 @@ void *kmem_cache_alloc_node_trace(struct kmem_cache *cachep,
 	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc_node_trace);
-#endif
 
 static __always_inline void *
 __do_kmalloc_node(size_t size, gfp_t flags, int node, unsigned long caller)

@@ -3238,7 +3238,6 @@ static __always_inline void *slab_alloc(struct kmem_cache *s,
 	return slab_alloc_node(s, gfpflags, NUMA_NO_NODE, addr, orig_size);
 }
 
-#ifdef CONFIG_TRACING
 void *kmem_cache_alloc_trace(struct kmem_cache *s, gfp_t gfpflags, size_t size)
 {
 	void *ret = slab_alloc(s, gfpflags, _RET_IP_, size);
@@ -3247,7 +3246,6 @@ void *kmem_cache_alloc_trace(struct kmem_cache *s, gfp_t gfpflags, size_t size)
 	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc_trace);
-#endif
 
 void *kmem_cache_alloc_node(struct kmem_cache *s, gfp_t gfpflags, int node)
 {
@@ -3260,7 +3258,6 @@ void *kmem_cache_alloc_node(struct kmem_cache *s, gfp_t gfpflags, int node)
 }
 EXPORT_SYMBOL(kmem_cache_alloc_node);
 
-#ifdef CONFIG_TRACING
 void *kmem_cache_alloc_node_trace(struct kmem_cache *s,
 				    gfp_t gfpflags,
 				    int node, size_t size)
@@ -3274,7 +3271,6 @@ void *kmem_cache_alloc_node_trace(struct kmem_cache *s,
 	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc_node_trace);
-#endif
 
 /*
  * Slow path handling. This may still be called frequently since objects

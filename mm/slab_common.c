@@ -954,7 +954,6 @@ void *kmalloc_order(size_t size, gfp_t flags, unsigned int order)
 }
 EXPORT_SYMBOL(kmalloc_order);
 
-#ifdef CONFIG_TRACING
 void *kmalloc_order_trace(size_t size, gfp_t flags, unsigned int order)
 {
 	void *ret = kmalloc_order(size, flags, order);
@@ -962,7 +961,6 @@ void *kmalloc_order_trace(size_t size, gfp_t flags, unsigned int order)
 	return ret;
 }
 EXPORT_SYMBOL(kmalloc_order_trace);
-#endif
 
 #ifdef CONFIG_SLAB_FREELIST_RANDOM
 /* Randomize a generic freelist */
