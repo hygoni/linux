@@ -3519,20 +3519,6 @@ error:
 }
 EXPORT_SYMBOL(kmem_cache_alloc_bulk);
 
-void *
-kmem_cache_alloc_trace(struct kmem_cache *cachep, gfp_t flags, size_t size)
-{
-	void *ret;
-
-	ret = slab_alloc(cachep, flags, size, _RET_IP_);
-
-	ret = kasan_kmalloc(cachep, ret, size, flags);
-	trace_kmalloc(_RET_IP_, ret,
-		      size, cachep->size, flags);
-	return ret;
-}
-EXPORT_SYMBOL(kmem_cache_alloc_trace);
-
 /**
  * kmem_cache_alloc_node - Allocate an object on the specified node
  * @cachep: The cache to allocate from.
