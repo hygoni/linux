@@ -450,15 +450,15 @@ static __always_inline void kfree_bulk(size_t size, void **p)
 }
 
 #ifdef CONFIG_TRACING
-extern void *kmem_cache_alloc_trace(struct kmem_cache *s, gfp_t flags, size_t size)
+extern void *kmalloc_trace(struct kmem_cache *s, gfp_t flags, size_t size)
 				   __assume_slab_alignment __alloc_size(3);
 
-extern void *kmem_cache_alloc_node_trace(struct kmem_cache *s, gfp_t gfpflags,
+extern void *kmalloc_node_trace(struct kmem_cache *s, gfp_t gfpflags,
 					 int node, size_t size) __assume_slab_alignment
 								__alloc_size(4);
 
 #else /* CONFIG_TRACING */
-static __always_inline __alloc_size(3) void *kmem_cache_alloc_trace(struct kmem_cache *s,
+static __always_inline __alloc_size(3) void *kmalloc_trace(struct kmem_cache *s,
 								    gfp_t flags, size_t size)
 {
 	void *ret = kmem_cache_alloc(s, flags);
@@ -467,7 +467,7 @@ static __always_inline __alloc_size(3) void *kmem_cache_alloc_trace(struct kmem_
 	return ret;
 }
 
-static __always_inline void *kmem_cache_alloc_node_trace(struct kmem_cache *s, gfp_t gfpflags,
+static __always_inline void *kmalloc_node_trace(struct kmem_cache *s, gfp_t gfpflags,
 							 int node, size_t size)
 {
 	void *ret = kmem_cache_alloc_node(s, gfpflags, node);
@@ -565,7 +565,7 @@ static __always_inline __alloc_size(1) void *kmalloc(size_t size, gfp_t flags)
 		if (!index)
 			return ZERO_SIZE_PTR;
 
-		return kmem_cache_alloc_trace(
+		return kmalloc_trace(
 				kmalloc_caches[kmalloc_type(flags)][index],
 				flags, size);
 #endif
@@ -583,7 +583,7 @@ static __always_inline __alloc_size(1) void *kmalloc_node(size_t size, gfp_t fla
 		if (!i)
 			return ZERO_SIZE_PTR;
 
-		return kmem_cache_alloc_node_trace(
+		return kmalloc_node_trace(
 				kmalloc_caches[kmalloc_type(flags)][i],
 						flags, node, size);
 	}

@@ -3239,14 +3239,14 @@ static __always_inline void *slab_alloc(struct kmem_cache *s,
 }
 
 #ifdef CONFIG_TRACING
-void *kmem_cache_alloc_trace(struct kmem_cache *s, gfp_t gfpflags, size_t size)
+noinline void *kmalloc_trace(struct kmem_cache *s, gfp_t gfpflags, size_t size)
 {
 	void *ret = slab_alloc(s, gfpflags, _RET_IP_, size);
 	trace_kmalloc(_RET_IP_, ret, size, s->size, gfpflags);
 	ret = kasan_kmalloc(s, ret, size, gfpflags);
 	return ret;
 }
-EXPORT_SYMBOL(kmem_cache_alloc_trace);
+EXPORT_SYMBOL(kmalloc_trace);
 #endif
 
 void *kmem_cache_alloc_node(struct kmem_cache *s, gfp_t gfpflags, int node)
@@ -3261,7 +3261,7 @@ void *kmem_cache_alloc_node(struct kmem_cache *s, gfp_t gfpflags, int node)
 EXPORT_SYMBOL(kmem_cache_alloc_node);
 
 #ifdef CONFIG_TRACING
-void *kmem_cache_alloc_node_trace(struct kmem_cache *s,
+noinline void *kmalloc_node_trace(struct kmem_cache *s,
 				    gfp_t gfpflags,
 				    int node, size_t size)
 {
@@ -3273,7 +3273,7 @@ void *kmem_cache_alloc_node_trace(struct kmem_cache *s,
 	ret = kasan_kmalloc(s, ret, size, gfpflags);
 	return ret;
 }
-EXPORT_SYMBOL(kmem_cache_alloc_node_trace);
+EXPORT_SYMBOL(kmalloc_node_trace);
 #endif
 
 /*

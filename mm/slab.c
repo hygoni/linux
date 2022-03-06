@@ -3520,8 +3520,8 @@ error:
 EXPORT_SYMBOL(kmem_cache_alloc_bulk);
 
 #ifdef CONFIG_TRACING
-void *
-kmem_cache_alloc_trace(struct kmem_cache *cachep, gfp_t flags, size_t size)
+noinline void *
+kmalloc_trace(struct kmem_cache *cachep, gfp_t flags, size_t size)
 {
 	void *ret;
 
@@ -3532,7 +3532,7 @@ kmem_cache_alloc_trace(struct kmem_cache *cachep, gfp_t flags, size_t size)
 		      size, cachep->size, flags);
 	return ret;
 }
-EXPORT_SYMBOL(kmem_cache_alloc_trace);
+EXPORT_SYMBOL(kmalloc_trace);
 #endif
 
 /**
@@ -3561,7 +3561,7 @@ void *kmem_cache_alloc_node(struct kmem_cache *cachep, gfp_t flags, int nodeid)
 EXPORT_SYMBOL(kmem_cache_alloc_node);
 
 #ifdef CONFIG_TRACING
-void *kmem_cache_alloc_node_trace(struct kmem_cache *cachep,
+noinline void *kmalloc_node_trace(struct kmem_cache *cachep,
 				  gfp_t flags,
 				  int nodeid,
 				  size_t size)
@@ -3576,7 +3576,7 @@ void *kmem_cache_alloc_node_trace(struct kmem_cache *cachep,
 			   flags, nodeid);
 	return ret;
 }
-EXPORT_SYMBOL(kmem_cache_alloc_node_trace);
+EXPORT_SYMBOL(kmalloc_node_trace);
 #endif
 
 static __always_inline void *
@@ -3590,7 +3590,7 @@ __do_kmalloc_node(size_t size, gfp_t flags, int node, unsigned long caller)
 	cachep = kmalloc_slab(size, flags);
 	if (unlikely(ZERO_OR_NULL_PTR(cachep)))
 		return cachep;
-	ret = kmem_cache_alloc_node_trace(cachep, flags, node, size);
+	ret = kmalloc_node_trace(cachep, flags, node, size);
 	ret = kasan_kmalloc(cachep, ret, size, flags);
 
 	return ret;
