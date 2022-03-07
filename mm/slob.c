@@ -588,7 +588,8 @@ int __kmem_cache_create(struct kmem_cache *c, slab_flags_t flags)
 	return 0;
 }
 
-static void *slob_alloc_node(struct kmem_cache *c, gfp_t flags, int node)
+static void *slob_alloc_node(struct kmem_cache *c, gfp_t flags,
+			     int node, unsigned long caller)
 {
 	void *b;
 
@@ -598,12 +599,12 @@ static void *slob_alloc_node(struct kmem_cache *c, gfp_t flags, int node)
 
 	if (c->size < PAGE_SIZE) {
 		b = slob_alloc(c->size, flags, c->align, node, 0);
-		trace_kmem_cache_alloc_node(c->name, _RET_IP_, b, c->object_size,
+		trace_kmem_cache_alloc_node(c->name, caller, b, c->object_size,
 					    SLOB_UNITS(c->size) * SLOB_UNIT,
 					    flags, node);
 	} else {
 		b = slob_new_pages(flags, get_order(c->size), node);
-		trace_kmem_cache_alloc_node(c->name, _RET_IP_, b, c->object_size,
+		trace_kmem_cache_alloc_node(c->name, caller, b, c->object_size,
 					    PAGE_SIZE << get_order(c->size),
 					    flags, node);
 	}
@@ -617,19 +618,14 @@ static void *slob_alloc_node(struct kmem_cache *c, gfp_t flags, int node)
 	return b;
 }
 
-void *__kmalloc_node(size_t size, gfp_t gfp, int node)
+void *__kmem_cache_alloc_node(struct kmem_cache *cachep, gfp_t gfp,
+			      int node, unsigned long caller)
 {
-	return __do_kmalloc_node(size, gfp, node, _RET_IP_);
+	return slob_alloc_node(cachep, gfp, node, caller);
 }
-EXPORT_SYMBOL(__kmalloc_node);
+EXPORT_SYMBOL(__kmem_cache_alloc_node);
 
-void *kmem_cache_alloc_node(struct kmem_cache *cachep, gfp_t gfp, int node)
-{
-	return slob_alloc_node(cachep, gfp, node);
-}
-EXPORT_SYMBOL(kmem_cache_alloc_node);
-
-static void __kmem_cache_free(void *b, int size)
+static void ___kmem_cache_free(void *b, int size)
 {
 	if (size < PAGE_SIZE)
 		slob_free(b, size);
@@ -642,23 +638,23 @@ static void kmem_rcu_free(struct rcu_head *head)
 	struct slob_rcu *slob_rcu = (struct slob_rcu *)head;
 	void *b = (void *)slob_rcu - (slob_rcu->size - sizeof(struct slob_rcu));
 
-	__kmem_cache_free(b, slob_rcu->size);
+	___kmem_cache_free(b, slob_rcu->size);
 }
 
-void kmem_cache_free(struct kmem_cache *c, void *b)
+void __kmem_cache_free(struct kmem_cache *c, void *b, unsigned long caller)
 {
 	kmemleak_free_recursive(b, c->flags);
-	trace_kmem_cache_free(c->name, _RET_IP_, b);
+	trace_kmem_cache_free(c->name, caller, b);
 	if (unlikely(c->flags & SLAB_TYPESAFE_BY_RCU)) {
 		struct slob_rcu *slob_rcu;
 		slob_rcu = b + (c->size - sizeof(struct slob_rcu));
 		slob_rcu->size = c->size;
 		call_rcu(&slob_rcu->head, kmem_rcu_free);
 	} else {
-		__kmem_cache_free(b, c->size);
+		___kmem_cache_free(b, c->size);
 	}
 }
-EXPORT_SYMBOL(kmem_cache_free);
+EXPORT_SYMBOL(__kmem_cache_free);
 
 void kmem_cache_free_bulk(struct kmem_cache *s, size_t size, void **p)
 {

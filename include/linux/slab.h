@@ -401,14 +401,53 @@ static_assert(PAGE_SHIFT <= 20);
 #define kmalloc_index(s) __kmalloc_index(s, true)
 #endif /* !CONFIG_SLOB */
 
-void *__kmalloc_node(size_t size, gfp_t flags, int node) __assume_kmalloc_alignment
-							 __alloc_size(1);
-void *kmem_cache_alloc_node(struct kmem_cache *s, gfp_t flags, int node) __assume_slab_alignment
-									 __malloc;
+extern void *__kmalloc_node_track_caller(size_t size, gfp_t flags, int node,
+					 unsigned long caller) __alloc_size(1);
+#define kmalloc_node_track_caller(size, flags, node) \
+	__kmalloc_node_track_caller(size, flags, node, \
+			_RET_IP_)
+/*
+ * kmalloc_track_caller is a special version of kmalloc that records the
+ * calling function of the routine calling it for slab leak tracking instead
+ * of just the calling function (confusing, eh?).
+ * It's useful when the call to kmalloc comes from a widely-used standard
+ * allocator where we care about the real place the memory allocation
+ * request comes from.
+ */
+#define kmalloc_track_caller(size, flags) \
+	__kmalloc_node_track_caller(size, flags, NUMA_NO_NODE, _RET_IP_)
+
+static __always_inline void *__kmalloc_node(size_t size, gfp_t flags, int node)
+{
+	return __kmalloc_node_track_caller(size, flags, node, _RET_IP_);
+}
 
 static __always_inline void *__kmalloc(size_t size, gfp_t flags)
 {
-	return __kmalloc_node(size, flags, NUMA_NO_NODE);
+	return __kmalloc_node_track_caller(size, flags, NUMA_NO_NODE, _RET_IP_);
+}
+
+void __kmem_cache_free(struct kmem_cache *s, void *x, unsigned long caller);
+void *__kmem_cache_alloc_node(struct kmem_cache *s, gfp_t gfpflags,
+			      int node, unsigned long caller);
+
+/**
+ * kmem_cache_alloc_node - Allocate an object on the specified node
+ * @cachep: The cache to allocate from.
+ * @flags: See kmalloc().
+ * @nodeid: node number of the target node.
+ *
+ * Identical to kmem_cache_alloc but it will allocate memory on the given
+ * node, which can improve the performance for cpu bound structures.
+ *
+ * Fallback to other node is possible if __GFP_THISNODE is not set.
+ *
+ * Return: pointer to the new object or %NULL in case of error
+ */
+static __always_inline void *
+kmem_cache_alloc_node(struct kmem_cache *s, gfp_t gfpflags, int node)
+{
+	return __kmem_cache_alloc_node(s, gfpflags, node, _RET_IP_);
 }
 
 /**
@@ -423,10 +462,21 @@ static __always_inline void *__kmalloc(size_t size, gfp_t flags)
  */
 static __always_inline void *kmem_cache_alloc(struct kmem_cache *s, gfp_t flags)
 {
-	return kmem_cache_alloc_node(s, flags, NUMA_NO_NODE);
+	return __kmem_cache_alloc_node(s, flags, NUMA_NO_NODE, _RET_IP_);
 }
 
-void kmem_cache_free(struct kmem_cache *s, void *objp);
+/**
+ * kmem_cache_free - Deallocate an object
+ * @cachep: The cache the allocation was from.
+ * @objp: The previously allocated object.
+ *
+ * Free an object which was previously allocated from this
+ * cache.
+ */
+static __always_inline void kmem_cache_free(struct kmem_cache *s, void *x)
+{
+	__kmem_cache_free(s, x, _RET_IP_);
+}
 
 /*
  * Bulk allocation and freeing operations. These are accelerated in an
@@ -613,21 +663,6 @@ static inline __alloc_size(1, 2) void *kcalloc_node(size_t n, size_t size, gfp_t
 	return kmalloc_array_node(n, size, flags | __GFP_ZERO, node);
 }
 
-extern void *__kmalloc_node_track_caller(size_t size, gfp_t flags, int node,
-					 unsigned long caller) __alloc_size(1);
-#define kmalloc_node_track_caller(size, flags, node) \
-	__kmalloc_node_track_caller(size, flags, node, \
-			_RET_IP_)
-/*
- * kmalloc_track_caller is a special version of kmalloc that records the
- * calling function of the routine calling it for slab leak tracking instead
- * of just the calling function (confusing, eh?).
- * It's useful when the call to kmalloc comes from a widely-used standard
- * allocator where we care about the real place the memory allocation
- * request comes from.
- */
-#define kmalloc_track_caller(size, flags) \
-	__kmalloc_node_track_caller(size, flags, NUMA_NO_NODE, _RET_IP_)
 /*
  * Shortcuts
  */
