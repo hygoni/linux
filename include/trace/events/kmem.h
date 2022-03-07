@@ -61,16 +61,18 @@ DEFINE_EVENT(kmem_alloc, kmem_cache_alloc,
 
 DECLARE_EVENT_CLASS(kmem_alloc_node,
 
-	TP_PROTO(unsigned long call_site,
+	TP_PROTO(const char *name,
+		 unsigned long call_site,
 		 const void *ptr,
 		 size_t bytes_req,
 		 size_t bytes_alloc,
 		 gfp_t gfp_flags,
 		 int node),
 
-	TP_ARGS(call_site, ptr, bytes_req, bytes_alloc, gfp_flags, node),
+	TP_ARGS(name, call_site, ptr, bytes_req, bytes_alloc, gfp_flags, node),
 
 	TP_STRUCT__entry(
+		__string(	name,		name		)
 		__field(	unsigned long,	call_site	)
 		__field(	const void *,	ptr		)
 		__field(	size_t,		bytes_req	)
@@ -80,6 +82,7 @@ DECLARE_EVENT_CLASS(kmem_alloc_node,
 	),
 
 	TP_fast_assign(
+		__assign_str(name, name);
 		__entry->call_site	= call_site;
 		__entry->ptr		= ptr;
 		__entry->bytes_req	= bytes_req;
@@ -88,7 +91,8 @@ DECLARE_EVENT_CLASS(kmem_alloc_node,
 		__entry->node		= node;
 	),
 
-	TP_printk("call_site=%pS ptr=%p bytes_req=%zu bytes_alloc=%zu gfp_flags=%s node=%d",
+	TP_printk("name=%s call_site=%pS ptr=%p bytes_req=%zu bytes_alloc=%zu gfp_flags=%s node=%d",
+		__get_str(name),
 		(void *)__entry->call_site,
 		__entry->ptr,
 		__entry->bytes_req,
@@ -99,20 +103,20 @@ DECLARE_EVENT_CLASS(kmem_alloc_node,
 
 DEFINE_EVENT(kmem_alloc_node, kmalloc_node,
 
-	TP_PROTO(unsigned long call_site, const void *ptr,
-		 size_t bytes_req, size_t bytes_alloc,
+	TP_PROTO(const char *name, unsigned long call_site,
+		 const void *ptr, size_t bytes_req, size_t bytes_alloc,
 		 gfp_t gfp_flags, int node),
 
-	TP_ARGS(call_site, ptr, bytes_req, bytes_alloc, gfp_flags, node)
+	TP_ARGS(name, call_site, ptr, bytes_req, bytes_alloc, gfp_flags, node)
 );
 
 DEFINE_EVENT(kmem_alloc_node, kmem_cache_alloc_node,
 
-	TP_PROTO(unsigned long call_site, const void *ptr,
-		 size_t bytes_req, size_t bytes_alloc,
+	TP_PROTO(const char *name, unsigned long call_site,
+		 const void *ptr, size_t bytes_req, size_t bytes_alloc,
 		 gfp_t gfp_flags, int node),
 
-	TP_ARGS(call_site, ptr, bytes_req, bytes_alloc, gfp_flags, node)
+	TP_ARGS(name, call_site, ptr, bytes_req, bytes_alloc, gfp_flags, node)
 );
 
 TRACE_EVENT(kfree,
@@ -137,24 +141,24 @@ TRACE_EVENT(kfree,
 
 TRACE_EVENT(kmem_cache_free,
 
-	TP_PROTO(unsigned long call_site, const void *ptr, const char *name),
+	TP_PROTO(const char *name, unsigned long call_site, const void *ptr),
 
-	TP_ARGS(call_site, ptr, name),
+	TP_ARGS(name, call_site, ptr),
 
 	TP_STRUCT__entry(
+		__string(	name,	name	)
 		__field(	unsigned long,	call_site	)
 		__field(	const void *,	ptr		)
-		__string(	name,	name	)
 	),
 
 	TP_fast_assign(
+		__assign_str(name, name);
 		__entry->call_site	= call_site;
 		__entry->ptr		= ptr;
-		__assign_str(name, name);
 	),
 
-	TP_printk("call_site=%pS ptr=%p name=%s",
-		  (void *)__entry->call_site, __entry->ptr, __get_str(name))
+	TP_printk("name=%s call_site=%pS ptr=%p",
+		  __get_str(name), (void *)__entry->call_site, __entry->ptr)
 );
 
 TRACE_EVENT(mm_page_free,
