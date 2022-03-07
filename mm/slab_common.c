@@ -909,6 +909,95 @@ void __init create_kmalloc_caches(slab_flags_t flags)
 	}
 #endif
 }
+
+/**
+ * kmem_cache_alloc_node - Allocate an object on the specified node
+ * @cachep: The cache to allocate from.
+ * @flags: See kmalloc().
+ * @nodeid: node number of the target node.
+ *
+ * Identical to kmem_cache_alloc but it will allocate memory on the given
+ * node, which can improve the performance for cpu bound structures.
+ *
+ * Fallback to other node is possible if __GFP_THISNODE is not set.
+ *
+ * Return: pointer to the new object or %NULL in case of error
+ */
+void *kmem_cache_alloc_node(struct kmem_cache *s, gfp_t gfpflags, int node)
+{
+	return __kmem_cache_alloc_node(s, gfpflags, node, _RET_IP_);
+}
+EXPORT_SYMBOL(kmem_cache_alloc_node);
+
+/**
+ * kmem_cache_free - Deallocate an object
+ * @cachep: The cache the allocation was from.
+ * @objp: The previously allocated object.
+ *
+ * Free an object which was previously allocated from this
+ * cache.
+ */
+void kmem_cache_free(struct kmem_cache *s, void *x)
+{
+	__kmem_cache_free(s, x, _RET_IP_);
+}
+EXPORT_SYMBOL(kmem_cache_free);
+
+void *__kmalloc_node_track_caller(size_t size, gfp_t gfpflags,
+					int node, unsigned long caller)
+{
+	struct kmem_cache *s;
+	void *ret;
+
+	if (unlikely(size > KMALLOC_MAX_CACHE_SIZE))
+		return kmalloc_large_node(size, gfpflags, node);
+
+	s = kmalloc_slab(size, gfpflags);
+
+	if (unlikely(ZERO_OR_NULL_PTR(s)))
+		return s;
+
+	ret = __kmem_cache_alloc_node(s, gfpflags, node, caller);
+	ret = kasan_kmalloc(s, ret, size, gfpflags);
+
+	return ret;
+}
+EXPORT_SYMBOL(__kmalloc_node_track_caller);
+
+void *__kmalloc_node(size_t size, gfp_t flags, int node)
+{
+	return __kmalloc_node_track_caller(size, flags, node, _RET_IP_);
+}
+EXPORT_SYMBOL(__kmalloc_node);
+
+/**
+ * kfree - free previously allocated memory
+ * @objp: pointer returned by kmalloc.
+ *
+ * If @objp is NULL, no operation is performed.
+ *
+ * Don't free memory not originally allocated by kmalloc()
+ * or you will run into trouble.
+ */
+void kfree(const void *x)
+{
+	struct folio *folio;
+	void *object = (void *)x;
+	struct kmem_cache *s;
+
+	if (unlikely(ZERO_OR_NULL_PTR(x)))
+		return;
+
+	folio = virt_to_folio(x);
+	if (unlikely(!folio_test_slab(folio))) {
+		free_large_kmalloc(folio, object);
+		return;
+	}
+
+	s = folio_slab(folio)->slab_cache;
+	__kmem_cache_free(s, object, _RET_IP_);
+}
+EXPORT_SYMBOL(kfree);
 #endif /* !CONFIG_SLOB */
 
 gfp_t kmalloc_fix_flags(gfp_t flags)

@@ -670,6 +670,9 @@ static inline struct kmem_cache *cache_from_obj(struct kmem_cache *s, void *x)
 }
 
 void free_large_kmalloc(struct folio *folio, void *object);
+void __kmem_cache_free(struct kmem_cache *s, void *x, unsigned long caller);
+void *__kmem_cache_alloc_node(struct kmem_cache *s, gfp_t gfpflags,
+			      int node, unsigned long caller);
 
 #endif /* CONFIG_SLOB */
 
