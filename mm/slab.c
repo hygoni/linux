@@ -3448,8 +3448,9 @@ void *__kmem_cache_alloc_node(struct kmem_cache *cachep, struct list_lru *lru,
 	void *ret = slab_alloc_node(cachep, lru, flags, nodeid,
 				    cachep->object_size, caller);
 
-	trace_kmem_cache_alloc_node(caller, ret, cachep->object_size,
-				    cachep->size, flags, nodeid);
+	trace_kmem_cache_alloc_node(cachep->name, caller, ret,
+				    cachep->object_size, cachep->size,
+				    flags, nodeid);
 
 	return ret;
 }
@@ -3518,7 +3519,7 @@ void *kmem_cache_alloc_node_trace(struct kmem_cache *cachep,
 	ret = slab_alloc_node(cachep, NULL, flags, nodeid, size, _RET_IP_);
 
 	ret = kasan_kmalloc(cachep, ret, size, flags);
-	trace_kmalloc_node(_RET_IP_, ret,
+	trace_kmalloc_node(cachep->name, _RET_IP_, ret,
 			   size, cachep->size,
 			   flags, nodeid);
 	return ret;
@@ -3593,7 +3594,7 @@ void kmem_cache_free(struct kmem_cache *cachep, void *objp)
 	if (!cachep)
 		return;
 
-	trace_kmem_cache_free(_RET_IP_, objp, cachep->name);
+	trace_kmem_cache_free(cachep->name, _RET_IP_, objp);
 	local_irq_save(flags);
 	debug_check_no_locks_freed(objp, cachep->object_size);
 	if (!(cachep->flags & SLAB_DEBUG_OBJECTS))

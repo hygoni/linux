@@ -956,10 +956,8 @@ void *kmalloc_large_node(size_t size, gfp_t flags, int node)
 	ptr = kasan_kmalloc_large(ptr, size, flags);
 	/* As ptr might get tagged, call kmemleak hook after KASAN. */
 	kmemleak_alloc(ptr, size, 1, flags);
-	trace_kmalloc_node(_RET_IP_, ptr,
-			   size, PAGE_SIZE << order,
-			   flags, node);
-
+	trace_kmalloc_node(KMALLOC_LARGE_NAME, _RET_IP_, ptr, size,
+			   PAGE_SIZE << order, flags, node);
 	return ptr;
 }
 EXPORT_SYMBOL(kmalloc_large_node);
