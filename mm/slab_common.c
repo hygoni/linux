@@ -1003,15 +1003,7 @@ void kfree(const void *object)
 }
 EXPORT_SYMBOL(kfree);
 
-/**
- * __ksize -- Uninstrumented ksize.
- * @objp: pointer to the object
- *
- * Unlike ksize(), __ksize() is uninstrumented, and does not provide the same
- * safety checks as ksize() with KASAN instrumentation enabled.
- *
- * Return: size of the actual memory used by @objp in bytes
- */
+/* Uninstrumented ksize. Only called by KASAN. */
 size_t __ksize(const void *object)
 {
 	struct folio *folio;
@@ -1026,7 +1018,6 @@ size_t __ksize(const void *object)
 
 	return slab_ksize(folio_slab(folio)->slab_cache);
 }
-EXPORT_SYMBOL(__ksize);
 #endif /* !CONFIG_SLOB */
 
 gfp_t kmalloc_fix_flags(gfp_t flags)
