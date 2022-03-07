@@ -3519,9 +3519,9 @@ void *kmem_cache_alloc_node_trace(struct kmem_cache *cachep,
 	ret = slab_alloc_node(cachep, NULL, flags, nodeid, size, _RET_IP_);
 
 	ret = kasan_kmalloc(cachep, ret, size, flags);
-	trace_kmalloc_node(cachep->name, _RET_IP_, ret,
-			   size, cachep->size,
-			   flags, nodeid);
+	trace_kmem_cache_alloc_node(cachep->name, _RET_IP_, ret,
+				    size, cachep->size,
+				    flags, nodeid);
 	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc_node_trace);
@@ -3657,7 +3657,6 @@ void kfree(const void *objp)
 	unsigned long flags;
 	struct folio *folio;
 
-	trace_kfree(_RET_IP_, objp);
 
 	if (unlikely(ZERO_OR_NULL_PTR(objp)))
 		return;
@@ -3669,6 +3668,7 @@ void kfree(const void *objp)
 	}
 
 	c = folio_slab(folio)->slab_cache;
+	trace_kmem_cache_free(c->name, _RET_IP_, objp);
 
 	local_irq_save(flags);
 	kfree_debugcheck(objp);

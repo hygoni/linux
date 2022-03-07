@@ -3229,8 +3229,8 @@ void *kmem_cache_alloc_node_trace(struct kmem_cache *s,
 {
 	void *ret = slab_alloc_node(s, NULL, gfpflags, node, _RET_IP_, size);
 
-	trace_kmalloc_node(s->name, _RET_IP_, ret,
-			   size, s->size, gfpflags, node);
+	trace_kmem_cache_alloc_node(s->name, _RET_IP_, ret,
+				    size, s->size, gfpflags, node);
 
 	ret = kasan_kmalloc(s, ret, size, gfpflags);
 	return ret;
@@ -4352,7 +4352,8 @@ void *__kmalloc_node(size_t size, gfp_t flags, int node)
 
 	ret = slab_alloc_node(s, NULL, flags, node, _RET_IP_, size);
 
-	trace_kmalloc_node(s->name, _RET_IP_, ret, size, s->size, flags, node);
+	trace_kmem_cache_alloc_node(s->name, _RET_IP_, ret, size,
+				    s->size, flags, node);
 
 	ret = kasan_kmalloc(s, ret, size, flags);
 
@@ -4431,8 +4432,7 @@ void kfree(const void *x)
 	struct folio *folio;
 	struct slab *slab;
 	void *object = (void *)x;
-
-	trace_kfree(_RET_IP_, x);
+	struct kmem_cache *s;
 
 	if (unlikely(ZERO_OR_NULL_PTR(x)))
 		return;
@@ -4442,8 +4442,12 @@ void kfree(const void *x)
 		free_large_kmalloc(folio, object);
 		return;
 	}
+
 	slab = folio_slab(folio);
-	slab_free(slab->slab_cache, slab, object, NULL, 1, _RET_IP_);
+	s = slab->slab_cache;
+
+	trace_kmem_cache_free(s->name, _RET_IP_, x);
+	slab_free(s, slab, object, NULL, 1, _RET_IP_);
 }
 EXPORT_SYMBOL(kfree);
 
@@ -4811,7 +4815,8 @@ void *__kmalloc_node_track_caller(size_t size, gfp_t gfpflags,
 	ret = slab_alloc_node(s, NULL, gfpflags, node, caller, size);
 
 	/* Honor the call site pointer we received. */
-	trace_kmalloc_node(s->name, caller, ret, size, s->size, gfpflags, node);
+	trace_kmem_cache_alloc_node(s->name, caller, ret, size,
+				    s->size, gfpflags, node);
 
 	return ret;
 }
