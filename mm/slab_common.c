@@ -947,8 +947,8 @@ void *kmalloc_large_node(size_t size, gfp_t flags, int node)
 	ptr = kasan_kmalloc_large(ptr, size, flags);
 	/* As ptr might get tagged, call kmemleak hook after KASAN. */
 	kmemleak_alloc(ptr, size, 1, flags);
-	trace_kmalloc_node(KMALLOC_LARGE_NAME, _RET_IP_, ptr, size,
-			   PAGE_SIZE << order, flags, node);
+	trace_kmem_cache_alloc_node(KMALLOC_LARGE_NAME, _RET_IP_, ptr, size,
+				    PAGE_SIZE << order, flags, node);
 	return ptr;
 
 }
@@ -961,6 +961,7 @@ void free_large_kmalloc(struct folio *folio, void *object)
 	if (WARN_ON_ONCE(order == 0))
 		pr_warn_once("object pointer: 0x%p\n", object);
 
+	trace_kmem_cache_free(KMALLOC_LARGE_NAME, _RET_IP_, object);
 	kmemleak_free(object);
 	kasan_kfree_large(object);
 

@@ -505,8 +505,8 @@ __do_kmalloc_node(size_t size, gfp_t gfp, int node, unsigned long caller)
 		*m = size;
 		ret = (void *)m + minalign;
 
-		trace_kmalloc_node(KMALLOC_NAME, caller, ret,
-				   size, size + minalign, gfp, node);
+		trace_kmem_cache_alloc_node(KMALLOC_NAME, caller, ret,
+					    size, size + minalign, gfp, node);
 	} else {
 		unsigned int order = get_order(size);
 
@@ -514,8 +514,9 @@ __do_kmalloc_node(size_t size, gfp_t gfp, int node, unsigned long caller)
 			gfp |= __GFP_COMP;
 		ret = slob_new_pages(gfp, order, node);
 
-		trace_kmalloc_node(KMALLOC_LARGE_NAME, caller, ret,
-				   size, PAGE_SIZE << order, gfp, node);
+		trace_kmem_cache_alloc_node(KMALLOC_LARGE_NAME, caller,
+					    ret, size, PAGE_SIZE << order,
+					    gfp, node);
 	}
 
 	kmemleak_alloc(ret, size, 1, gfp);
@@ -533,8 +534,6 @@ void kfree(const void *block)
 {
 	struct folio *sp;
 
-	trace_kfree(_RET_IP_, block);
-
 	if (unlikely(ZERO_OR_NULL_PTR(block)))
 		return;
 	kmemleak_free(block);
@@ -543,10 +542,13 @@ void kfree(const void *block)
 	if (folio_test_slab(sp)) {
 		int align = max_t(size_t, ARCH_KMALLOC_MINALIGN, ARCH_SLAB_MINALIGN);
 		unsigned int *m = (unsigned int *)(block - align);
+
+		trace_kmem_cache_free(KMALLOC_LARGE_NAME, _RET_IP_, block);
 		slob_free(m, *m + align);
 	} else {
 		unsigned int order = folio_order(sp);
 
+		trace_kmem_cache_free(KMALLOC_NAME, _RET_IP_, block);
 		mod_node_page_state(folio_pgdat(sp), NR_SLAB_UNRECLAIMABLE_B,
 				    -(PAGE_SIZE << order));
 		__free_pages(folio_page(sp, 0), order);
