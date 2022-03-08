@@ -3508,25 +3508,6 @@ error:
 }
 EXPORT_SYMBOL(kmem_cache_alloc_bulk);
 
-#ifdef CONFIG_TRACING
-void *kmem_cache_alloc_node_trace(struct kmem_cache *cachep,
-				  gfp_t flags,
-				  int nodeid,
-				  size_t size)
-{
-	void *ret;
-
-	ret = slab_alloc_node(cachep, NULL, flags, nodeid, size, _RET_IP_);
-
-	ret = kasan_kmalloc(cachep, ret, size, flags);
-	trace_kmem_cache_alloc(cachep->name, _RET_IP_, ret,
-			       size, cachep->size,
-			       flags, nodeid);
-	return ret;
-}
-EXPORT_SYMBOL(kmem_cache_alloc_node_trace);
-#endif
-
 #ifdef CONFIG_PRINTK
 void kmem_obj_info(struct kmem_obj_info *kpp, void *object, struct slab *slab)
 {
