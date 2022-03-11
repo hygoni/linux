@@ -3317,31 +3317,16 @@ static void __slab_free(struct kmem_cache *s, struct slab *slab,
 		was_frozen = new.frozen;
 		new.inuse -= cnt;
 		if ((!new.inuse || !prior) && !was_frozen) {
-
-			if (kmem_cache_has_cpu_partial(s) && !prior) {
-
-				/*
-				 * Slab was on no list before and will be
-				 * partially empty
-				 * We can defer the list move and instead
-				 * freeze it.
-				 */
-				new.frozen = 1;
-
-			} else { /* Needs to be taken off a list */
-
-				n = get_node(s, slab_nid(slab));
-				/*
-				 * Speculatively acquire the list_lock.
-				 * If the cmpxchg does not succeed then we may
-				 * drop the list_lock without any processing.
-				 *
-				 * Otherwise the list_lock will synchronize with
-				 * other processors updating the list of slabs.
-				 */
-				spin_lock_irqsave(&n->list_lock, flags);
-
-			}
+			n = get_node(s, slab_nid(slab));
+			/*
+			 * Speculatively acquire the list_lock.
+			 * If the cmpxchg does not succeed then we may
+			 * drop the list_lock without any processing.
+			 *
+			 * Otherwise the list_lock will synchronize with
+			 * other processors updating the list of slabs.
+			 */
+			spin_lock_irqsave(&n->list_lock, flags);
 		}
 
 	} while (!cmpxchg_double_slab(s, slab,
@@ -3357,15 +3342,7 @@ static void __slab_free(struct kmem_cache *s, struct slab *slab,
 			 * activity can be necessary.
 			 */
 			stat(s, FREE_FROZEN);
-		} else if (new.frozen) {
-			/*
-			 * If we just froze the slab then put it onto the
-			 * per cpu partial list.
-			 */
-			put_cpu_partial(s, slab, 1);
-			stat(s, CPU_PARTIAL_FREE);
 		}
-
 		return;
 	}
 
@@ -3376,7 +3353,7 @@ static void __slab_free(struct kmem_cache *s, struct slab *slab,
 	 * Objects left in the slab. If it was not on the partial list before
 	 * then add it.
 	 */
-	if (!kmem_cache_has_cpu_partial(s) && unlikely(!prior)) {
+	if (unlikely(!prior)) {
 		remove_full(s, n, slab);
 		add_partial(n, slab, DEACTIVATE_TO_TAIL);
 		stat(s, FREE_ADD_PARTIAL);
