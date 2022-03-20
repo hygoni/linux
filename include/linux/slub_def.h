@@ -22,7 +22,6 @@ enum stat_item {
 	FREE_REMOVE_PARTIAL,	/* Freeing removes last object */
 	ALLOC_FROM_PARTIAL,	/* Cpu slab acquired from node partial list */
 	ALLOC_SLAB,		/* Cpu slab acquired from page allocator */
-	ALLOC_REFILL,		/* Refill cpu slab from slab freelist */
 	ALLOC_NODE_MISMATCH,	/* Switching cpu slab */
 	FREE_SLAB,		/* Slab freed to the page allocator */
 	CPUSLAB_FLUSH,		/* Abandoning of the cpu slab */
@@ -41,14 +40,22 @@ enum stat_item {
 	CPU_PARTIAL_DRAIN,	/* Drain cpu partial to node partial */
 	NR_SLUB_STAT_ITEMS };
 
+
+union cpu_counters {
+	unsigned long counters;
+	struct {
+		unsigned tid:16; /* Globally unique transaction id */
+		unsigned objects:16; /* Number of objects in cpu freelist */
+	};
+};
+
 /*
  * When changing the layout, make sure freelist and tid are still compatible
  * with this_cpu_cmpxchg_double() alignment requirements.
  */
 struct kmem_cache_cpu {
 	void **freelist;	/* Pointer to next available object */
-	unsigned long tid;	/* Globally unique transaction id */
-	struct slab *slab;	/* The slab from which we are allocating */
+	union cpu_counters counters;
 	local_lock_t lock;	/* Protects the fields above */
 #ifdef CONFIG_SLUB_STATS
 	unsigned stat[NR_SLUB_STAT_ITEMS];
@@ -76,6 +83,7 @@ struct kmem_cache {
 	unsigned int object_size;/* The size of an object without metadata */
 	struct reciprocal_value reciprocal_size;
 	unsigned int offset;	/* Free pointer offset */
+	unsigned int cpu_objects; /* Number of objects to keep in cpu freelist */
 	struct kmem_cache_order_objects oo;
 
 	/* Allocation and freeing of slabs */
@@ -157,6 +165,19 @@ static inline unsigned int obj_to_index(const struct kmem_cache *cache,
 	if (is_kfence_address(obj))
 		return 0;
 	return __obj_to_index(cache, slab_address(slab), obj);
+}
+
+static inline void *index_to_obj(struct kmem_cache *s,
+				 struct slab *slab, unsigned int index)
+{
+	void *p = slab_address(slab);
+
+	return fixup_red_left(s, p) + index * s->size;
+}
+
+static inline void *tail_obj(struct kmem_cache *s, struct slab *slab)
+{
+	return index_to_obj(s, slab, slab->tail_idx);
 }
 
 static inline int objs_per_slab(const struct kmem_cache *cache,

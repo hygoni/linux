@@ -39,11 +39,10 @@ struct slab {
 		unsigned long counters;
 		struct {
 			unsigned inuse:16;
-			unsigned objects:15;
-			unsigned frozen:1;
+			unsigned objects:16;
 		};
 	};
-	unsigned int __unused;
+	unsigned int tail_idx;
 
 #elif defined(CONFIG_SLOB)
 
