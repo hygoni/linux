@@ -2068,7 +2068,7 @@ static inline void *acquire_slab(struct kmem_cache *s,
 static inline bool pfmemalloc_match(struct slab *slab, gfp_t gfpflags);
 
 static void deactivate_slab(struct kmem_cache *s, struct slab *slab,
-			    void *freelist);
+			    void *freelist, int free_delta);
 
 /*
  * Take freelist from a specific node.
@@ -2079,7 +2079,7 @@ static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 	struct slab *slab, *slab2;
 	void *freelist = NULL;
 	unsigned long flags;
-	unsigned int nr_objects = 0;
+	unsigned int nr_objects = 0, delta;
 
 	/*
 	 * Racy check. If we mistakenly see no partial slabs then we
@@ -2097,10 +2097,9 @@ static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 		if (!pfmemalloc_match(slab, gfpflags))
 			continue;
 
-		nr_objects += (slab->objects - slab->inuse);
+		delta = (slab->objects - slab->inuse);
 		t = acquire_slab(s, n, slab);
 		if (!t)
-			// FIXME
 			break;
 
 		if (!freelist) {
@@ -2109,6 +2108,7 @@ static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 			set_freepointer(s, tail_obj(s, slab), freelist);
 			freelist = t;
 		}
+		nr_objects += delta;
 
 		if (kmem_cache_debug(s)) {
 			if (!alloc_debug_check(s, slab, freelist))
@@ -2121,10 +2121,11 @@ static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 			*cnt = 1;
 			spin_unlock_irqrestore(&n->list_lock, flags);
 
-			deactivate_slab(s, slab, get_freepointer(s, freelist));
+			deactivate_slab(s, slab, get_freepointer(s, freelist), delta - 1);
 			stat(s, ALLOC_FROM_PARTIAL);
 			return freelist;
 		}
+
 
 		stat(s, ALLOC_FROM_PARTIAL);
 
@@ -2310,11 +2311,10 @@ static void init_kmem_cache_cpus(struct kmem_cache *s)
  * by the caller.
  */
 static void deactivate_slab(struct kmem_cache *s, struct slab *slab,
-			    void *freelist)
+			    void *freelist, int free_delta)
 {
 	enum slab_modes { M_NONE, M_PARTIAL, M_FULL, M_FREE, M_FULL_NOLIST };
 	struct kmem_cache_node *n = get_node(s, slab_nid(slab));
-	int free_delta = 0;
 	enum slab_modes mode = M_NONE;
 	void *nextfree, *freelist_iter, *freelist_tail;
 	int tail = DEACTIVATE_TO_HEAD;
@@ -2325,29 +2325,6 @@ static void deactivate_slab(struct kmem_cache *s, struct slab *slab,
 	if (slab->freelist) {
 		stat(s, DEACTIVATE_REMOTE_FREES);
 		tail = DEACTIVATE_TO_TAIL;
-	}
-
-	/*
-	 * Stage one: Count the objects on cpu's freelist as free_delta and
-	 * remember the last object in freelist_tail for later splicing.
-	 */
-	freelist_tail = NULL;
-	freelist_iter = freelist;
-	while (freelist_iter) {
-		nextfree = get_freepointer(s, freelist_iter);
-
-		/*
-		 * If 'nextfree' is invalid, it is possible that the object at
-		 * 'freelist_iter' is already corrupted.  So isolate all objects
-		 * starting at 'freelist_iter' by skipping them.
-		 */
-		if (freelist_corrupted(s, slab, &freelist_iter, nextfree))
-			break;
-
-		freelist_tail = freelist_iter;
-		free_delta++;
-
-		freelist_iter = nextfree;
 	}
 
 	/*
@@ -2734,7 +2711,7 @@ new_objects:
 	local_lock_irqsave(&s->cpu_slab->lock, flags);
 	if (c->freelist) {
 		/* preempted */
-		deactivate_slab(s, slab, slab->freelist);
+		deactivate_slab(s, slab, slab->freelist, slab->objects);
 		freelist = c->freelist;
 		goto load_freelist;
 	}
