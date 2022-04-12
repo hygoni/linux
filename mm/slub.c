@@ -4396,15 +4396,8 @@ void *__kmalloc_node(size_t size, gfp_t flags, int node)
 	struct kmem_cache *s;
 	void *ret;
 
-	if (unlikely(size > KMALLOC_MAX_CACHE_SIZE)) {
-		ret = kmalloc_large_node(size, flags, node);
-
-		trace_kmalloc_node(_RET_IP_, ret,
-				   size, PAGE_SIZE << get_order(size),
-				   flags, node);
-
-		return ret;
-	}
+	if (unlikely(size > KMALLOC_MAX_CACHE_SIZE))
+		return kmalloc_large_node(size, flags, node);
 
 	s = kmalloc_slab(size, flags);
 
@@ -4861,15 +4854,8 @@ void *__kmalloc_node_track_caller(size_t size, gfp_t gfpflags,
 	struct kmem_cache *s;
 	void *ret;
 
-	if (unlikely(size > KMALLOC_MAX_CACHE_SIZE)) {
-		ret = kmalloc_large_node(size, gfpflags, node);
-
-		trace_kmalloc_node(caller, ret,
-				   size, PAGE_SIZE << get_order(size),
-				   gfpflags, node);
-
-		return ret;
-	}
+	if (unlikely(size > KMALLOC_MAX_CACHE_SIZE))
+		return kmalloc_large_node(size, gfpflags, node);
 
 	s = kmalloc_slab(size, gfpflags);
 

@@ -955,6 +955,9 @@ void *kmalloc_large_node(size_t size, gfp_t flags, int node)
 	void *ptr = NULL;
 	unsigned int order = get_order(size);
 
+	if (unlikely(flags & GFP_SLAB_BUG_MASK))
+		flags = kmalloc_fix_flags(flags);
+
 	flags |= __GFP_COMP;
 	page = alloc_pages_node(node, flags, order);
 	if (page) {
@@ -966,6 +969,9 @@ void *kmalloc_large_node(size_t size, gfp_t flags, int node)
 	ptr = kasan_kmalloc_large(ptr, size, flags);
 	/* As ptr might get tagged, call kmemleak hook after KASAN. */
 	kmemleak_alloc(ptr, size, 1, flags);
+	trace_kmalloc_node(_RET_IP_, ptr,
+			   size, PAGE_SIZE << order,
+			   flags, node);
 
 	return ptr;
 }
