@@ -3448,7 +3448,7 @@ void *__kmem_cache_alloc_node(struct kmem_cache *cachep, struct list_lru *lru,
 	void *ret = slab_alloc_node(cachep, lru, flags, nodeid,
 				    cachep->object_size, caller);
 
-	trace_kmem_cache_alloc_node(cachep->name, caller, ret,
+	trace_kmem_cache_alloc(cachep->name, caller, ret,
 				    cachep->object_size, cachep->size,
 				    flags, nodeid);
 
@@ -3519,9 +3519,9 @@ void *kmem_cache_alloc_node_trace(struct kmem_cache *cachep,
 	ret = slab_alloc_node(cachep, NULL, flags, nodeid, size, _RET_IP_);
 
 	ret = kasan_kmalloc(cachep, ret, size, flags);
-	trace_kmem_cache_alloc_node(cachep->name, _RET_IP_, ret,
-				    size, cachep->size,
-				    flags, nodeid);
+	trace_kmem_cache_alloc(cachep->name, _RET_IP_, ret,
+			       size, cachep->size,
+			       flags, nodeid);
 	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc_node_trace);

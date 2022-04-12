@@ -957,8 +957,8 @@ void *kmalloc_large_node(size_t size, gfp_t flags, int node)
 	ptr = kasan_kmalloc_large(ptr, size, flags);
 	/* As ptr might get tagged, call kmemleak hook after KASAN. */
 	kmemleak_alloc(ptr, size, 1, flags);
-	trace_kmem_cache_alloc_node(KMALLOC_LARGE_NAME, _RET_IP_, ptr, size,
-				    PAGE_SIZE << order, flags, node);
+	trace_kmem_cache_alloc(KMALLOC_LARGE_NAME, _RET_IP_, ptr, size,
+			       PAGE_SIZE << order, flags, node);
 	return ptr;
 }
 EXPORT_SYMBOL(kmalloc_large_node);
@@ -1291,7 +1291,7 @@ size_t ksize(const void *objp)
 EXPORT_SYMBOL(ksize);
 
 /* Tracepoints definitions. */
-EXPORT_TRACEPOINT_SYMBOL(kmem_cache_alloc_node);
+EXPORT_TRACEPOINT_SYMBOL(kmem_cache_alloc);
 EXPORT_TRACEPOINT_SYMBOL(kmem_cache_free);
 
 int should_failslab(struct kmem_cache *s, gfp_t gfpflags)

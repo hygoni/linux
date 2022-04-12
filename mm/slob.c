@@ -505,8 +505,8 @@ __do_kmalloc_node(size_t size, gfp_t gfp, int node, unsigned long caller)
 		*m = size;
 		ret = (void *)m + minalign;
 
-		trace_kmem_cache_alloc_node(KMALLOC_NAME, caller, ret,
-					    size, size + minalign, gfp, node);
+		trace_kmem_cache_alloc(KMALLOC_NAME, caller, ret,
+				       size, size + minalign, gfp, node);
 	} else {
 		unsigned int order = get_order(size);
 
@@ -514,9 +514,9 @@ __do_kmalloc_node(size_t size, gfp_t gfp, int node, unsigned long caller)
 			gfp |= __GFP_COMP;
 		ret = slob_new_pages(gfp, order, node);
 
-		trace_kmem_cache_alloc_node(KMALLOC_LARGE_NAME, caller,
-					    ret, size, PAGE_SIZE << order,
-					    gfp, node);
+		trace_kmem_cache_alloc(KMALLOC_LARGE_NAME, caller,
+				       ret, size, PAGE_SIZE << order,
+				       gfp, node);
 	}
 
 	kmemleak_alloc(ret, size, 1, gfp);
@@ -599,14 +599,14 @@ static void *slob_alloc_node(struct kmem_cache *c, gfp_t flags, int node,
 
 	if (c->size < PAGE_SIZE) {
 		b = slob_alloc(c->size, flags, c->align, node, 0);
-		trace_kmem_cache_alloc_node(c->name, caller, b, c->object_size,
-					    SLOB_UNITS(c->size) * SLOB_UNIT,
-					    flags, node);
+		trace_kmem_cache_alloc(c->name, caller, b, c->object_size,
+				       SLOB_UNITS(c->size) * SLOB_UNIT,
+				       flags, node);
 	} else {
 		b = slob_new_pages(flags, get_order(c->size), node);
-		trace_kmem_cache_alloc_node(c->name, caller, b, c->object_size,
-					    PAGE_SIZE << get_order(c->size),
-					    flags, node);
+		trace_kmem_cache_alloc(c->name, caller, b, c->object_size,
+				       PAGE_SIZE << get_order(c->size),
+				       flags, node);
 	}
 
 	if (b && c->ctor) {

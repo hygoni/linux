@@ -9,7 +9,7 @@
 #include <linux/tracepoint.h>
 #include <trace/events/mmflags.h>
 
-DECLARE_EVENT_CLASS(kmem_alloc_node,
+DECLARE_EVENT_CLASS(kmem_alloc,
 
 	TP_PROTO(const char *name,
 		 unsigned long call_site,
@@ -51,7 +51,7 @@ DECLARE_EVENT_CLASS(kmem_alloc_node,
 		__entry->node)
 );
 
-DEFINE_EVENT(kmem_alloc_node, kmem_cache_alloc_node,
+DEFINE_EVENT(kmem_alloc, kmem_cache_alloc,
 
 	TP_PROTO(const char *name, unsigned long call_site,
 		 const void *ptr, size_t bytes_req, size_t bytes_alloc,

@@ -3215,8 +3215,8 @@ void *__kmem_cache_alloc_node(struct kmem_cache *s, struct list_lru *lru, gfp_t 
 {
 	void *ret = slab_alloc_node(s, lru, gfpflags, node, caller, s->object_size);
 
-	trace_kmem_cache_alloc_node(s->name, caller, ret, s->object_size,
-				    s->size, gfpflags, node);
+	trace_kmem_cache_alloc(s->name, caller, ret, s->object_size,
+			       s->size, gfpflags, node);
 
 	return ret;
 }
@@ -3229,8 +3229,8 @@ void *kmem_cache_alloc_node_trace(struct kmem_cache *s,
 {
 	void *ret = slab_alloc_node(s, NULL, gfpflags, node, _RET_IP_, size);
 
-	trace_kmem_cache_alloc_node(s->name, _RET_IP_, ret,
-				    size, s->size, gfpflags, node);
+	trace_kmem_cache_alloc(s->name, _RET_IP_, ret,
+			       size, s->size, gfpflags, node);
 
 	ret = kasan_kmalloc(s, ret, size, gfpflags);
 	return ret;
@@ -4352,8 +4352,8 @@ void *__kmalloc_node(size_t size, gfp_t flags, int node)
 
 	ret = slab_alloc_node(s, NULL, flags, node, _RET_IP_, size);
 
-	trace_kmem_cache_alloc_node(s->name, _RET_IP_, ret, size,
-				    s->size, flags, node);
+	trace_kmem_cache_alloc(s->name, _RET_IP_, ret, size,
+			       s->size, flags, node);
 
 	ret = kasan_kmalloc(s, ret, size, flags);
 
@@ -4815,8 +4815,8 @@ void *__kmalloc_node_track_caller(size_t size, gfp_t gfpflags,
 	ret = slab_alloc_node(s, NULL, gfpflags, node, caller, size);
 
 	/* Honor the call site pointer we received. */
-	trace_kmem_cache_alloc_node(s->name, caller, ret, size,
-				    s->size, gfpflags, node);
+	trace_kmem_cache_alloc(s->name, caller, ret, size,
+			       s->size, gfpflags, node);
 
 	return ret;
 }
