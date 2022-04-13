@@ -919,7 +919,9 @@ void free_large_kmalloc(struct folio *folio, void *object)
 	__free_pages(folio_page(folio, 0), order);
 }
 
-void *__kmalloc_node(size_t size, gfp_t flags, int node)
+static __always_inline
+void *__do_kmalloc_node(size_t size, gfp_t flags, int node,
+			unsigned long caller __maybe_unused)
 {
 	struct kmem_cache *s;
 	void *ret;
@@ -932,31 +934,22 @@ void *__kmalloc_node(size_t size, gfp_t flags, int node)
 	if (unlikely(ZERO_OR_NULL_PTR(s)))
 		return s;
 
-	ret = __kmem_cache_alloc_node(s, NULL, flags, node, _RET_IP_);
+	ret = __kmem_cache_alloc_node(s, NULL, flags, node, caller);
 	ret = kasan_kmalloc(s, ret, size, flags);
 
 	return ret;
+}
+
+void *__kmalloc_node(size_t size, gfp_t flags, int node)
+{
+	return __do_kmalloc_node(size, flags, node, _RET_IP_);
 }
 EXPORT_SYMBOL(__kmalloc_node);
 
 void *__kmalloc_node_track_caller(size_t size, gfp_t gfpflags,
 					int node, unsigned long caller)
 {
-	struct kmem_cache *s;
-	void *ret;
-
-	if (unlikely(size > KMALLOC_MAX_CACHE_SIZE))
-		return kmalloc_large_node(size, gfpflags, node);
-
-	s = kmalloc_slab(size, gfpflags);
-
-	if (unlikely(ZERO_OR_NULL_PTR(s)))
-		return s;
-
-	ret = __kmem_cache_alloc_node(s, NULL, gfpflags, node, caller);
-	ret = kasan_kmalloc(s, ret, size, gfpflags);
-
-	return ret;
+	return __do_kmalloc_node(size, gfpflags, node, caller);
 }
 EXPORT_SYMBOL(__kmalloc_node_track_caller);
 
