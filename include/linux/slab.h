@@ -462,7 +462,21 @@ void *kmem_cache_alloc_lru(struct kmem_cache *s, struct list_lru *lru, gfp_t gfp
 	return __kmem_cache_alloc_node(s, lru, gfpflags, NUMA_NO_NODE, _THIS_IP_);
 }
 
-void kmem_cache_free(struct kmem_cache *s, void *objp);
+void __kmem_cache_free(struct kmem_cache *s, void *objp, unsigned long caller __maybe_unused);
+
+/**
+ * kmem_cache_free - Deallocate an object
+ * @s: The cache the allocation was from.
+ * @objp: The previously allocated object.
+ *
+ * Free an object which was previously allocated from this
+ * cache.
+ */
+static __always_inline void kmem_cache_free(struct kmem_cache *s, void *objp)
+{
+	__kmem_cache_free(s, objp, _THIS_IP_);
+}
+
 
 /*
  * Bulk allocation and freeing operations. These are accelerated in an

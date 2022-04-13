@@ -3579,30 +3579,23 @@ void kmem_obj_info(struct kmem_obj_info *kpp, void *object, struct slab *slab)
 }
 #endif
 
-/**
- * kmem_cache_free - Deallocate an object
- * @cachep: The cache the allocation was from.
- * @objp: The previously allocated object.
- *
- * Free an object which was previously allocated from this
- * cache.
- */
-void kmem_cache_free(struct kmem_cache *cachep, void *objp)
+void __kmem_cache_free(struct kmem_cache *cachep, void *objp,
+		       unsigned long caller __maybe_unused)
 {
 	unsigned long flags;
 	cachep = cache_from_obj(cachep, objp);
 	if (!cachep)
 		return;
 
-	trace_kmem_cache_free(cachep->name, _RET_IP_, objp);
+	trace_kmem_cache_free(cachep->name, caller, objp);
 	local_irq_save(flags);
 	debug_check_no_locks_freed(objp, cachep->object_size);
 	if (!(cachep->flags & SLAB_DEBUG_OBJECTS))
 		debug_check_no_obj_freed(objp, cachep->object_size);
-	__cache_free(cachep, objp, _RET_IP_);
+	__cache_free(cachep, objp, caller);
 	local_irq_restore(flags);
 }
-EXPORT_SYMBOL(kmem_cache_free);
+EXPORT_SYMBOL(__kmem_cache_free);
 
 void kmem_cache_free_bulk(struct kmem_cache *orig_s, size_t size, void **p)
 {

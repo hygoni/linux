@@ -3466,15 +3466,16 @@ void ___cache_free(struct kmem_cache *cache, void *x, unsigned long addr)
 }
 #endif
 
-void kmem_cache_free(struct kmem_cache *s, void *x)
+void __kmem_cache_free(struct kmem_cache *s, void *x,
+		       unsigned long caller __maybe_unused)
 {
 	s = cache_from_obj(s, x);
 	if (!s)
 		return;
-	trace_kmem_cache_free(s->name, _RET_IP_, x);
-	slab_free(s, virt_to_slab(x), x, NULL, 1, _RET_IP_);
+	trace_kmem_cache_free(s->name, caller, x);
+	slab_free(s, virt_to_slab(x), x, NULL, 1, caller);
 }
-EXPORT_SYMBOL(kmem_cache_free);
+EXPORT_SYMBOL(__kmem_cache_free);
 
 struct detached_freelist {
 	struct slab *slab;
