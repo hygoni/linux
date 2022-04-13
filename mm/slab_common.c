@@ -954,6 +954,7 @@ void *__kmalloc_node_track_caller(size_t size, gfp_t gfpflags,
 		return s;
 
 	ret = __kmem_cache_alloc_node(s, NULL, gfpflags, node, caller);
+	ret = kasan_kmalloc(s, ret, size, gfpflags);
 
 	return ret;
 }
