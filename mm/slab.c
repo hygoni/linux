@@ -3442,40 +3442,18 @@ void ___cache_free(struct kmem_cache *cachep, void *objp,
 	__free_one(ac, objp);
 }
 
-static __always_inline
-void *__kmem_cache_alloc_lru(struct kmem_cache *cachep, struct list_lru *lru,
-			     gfp_t flags)
+void *__kmem_cache_alloc_node(struct kmem_cache *cachep, struct list_lru *lru,
+			      gfp_t flags, int nodeid, unsigned long caller)
 {
-	void *ret = slab_alloc(cachep, lru, flags, cachep->object_size, _RET_IP_);
+	void *ret = slab_alloc_node(cachep, lru, flags, nodeid,
+				    cachep->object_size, caller);
 
-	trace_kmem_cache_alloc(_RET_IP_, ret,
-			       cachep->object_size, cachep->size, flags);
+	trace_kmem_cache_alloc_node(caller, ret, cachep->object_size,
+				    cachep->size, flags, nodeid);
 
 	return ret;
 }
-
-/**
- * kmem_cache_alloc - Allocate an object
- * @cachep: The cache to allocate from.
- * @flags: See kmalloc().
- *
- * Allocate an object from this cache.  The flags are only relevant
- * if the cache has no available objects.
- *
- * Return: pointer to the new object or %NULL in case of error
- */
-void *kmem_cache_alloc(struct kmem_cache *cachep, gfp_t flags)
-{
-	return __kmem_cache_alloc_lru(cachep, NULL, flags);
-}
-EXPORT_SYMBOL(kmem_cache_alloc);
-
-void *kmem_cache_alloc_lru(struct kmem_cache *cachep, struct list_lru *lru,
-			   gfp_t flags)
-{
-	return __kmem_cache_alloc_lru(cachep, lru, flags);
-}
-EXPORT_SYMBOL(kmem_cache_alloc_lru);
+EXPORT_SYMBOL(__kmem_cache_alloc_node);
 
 static __always_inline void
 cache_alloc_debugcheck_after_bulk(struct kmem_cache *s, gfp_t flags,
@@ -3544,31 +3522,6 @@ kmem_cache_alloc_trace(struct kmem_cache *cachep, gfp_t flags, size_t size)
 }
 EXPORT_SYMBOL(kmem_cache_alloc_trace);
 #endif
-
-/**
- * kmem_cache_alloc_node - Allocate an object on the specified node
- * @cachep: The cache to allocate from.
- * @flags: See kmalloc().
- * @nodeid: node number of the target node.
- *
- * Identical to kmem_cache_alloc but it will allocate memory on the given
- * node, which can improve the performance for cpu bound structures.
- *
- * Fallback to other node is possible if __GFP_THISNODE is not set.
- *
- * Return: pointer to the new object or %NULL in case of error
- */
-void *kmem_cache_alloc_node(struct kmem_cache *cachep, gfp_t flags, int nodeid)
-{
-	void *ret = slab_alloc_node(cachep, NULL, flags, nodeid, cachep->object_size, _RET_IP_);
-
-	trace_kmem_cache_alloc_node(_RET_IP_, ret,
-				    cachep->object_size, cachep->size,
-				    flags, nodeid);
-
-	return ret;
-}
-EXPORT_SYMBOL(kmem_cache_alloc_node);
 
 #ifdef CONFIG_TRACING
 void *kmem_cache_alloc_node_trace(struct kmem_cache *cachep,

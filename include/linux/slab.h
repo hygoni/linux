@@ -429,9 +429,52 @@ void *__kmalloc(size_t size, gfp_t flags)
 	return __kmalloc_node(size, flags, NUMA_NO_NODE);
 }
 
-void *kmem_cache_alloc(struct kmem_cache *s, gfp_t flags) __assume_slab_alignment __malloc;
-void *kmem_cache_alloc_lru(struct kmem_cache *s, struct list_lru *lru,
-			   gfp_t gfpflags) __assume_slab_alignment __malloc;
+
+void *__kmem_cache_alloc_node(struct kmem_cache *s, struct list_lru *lru,
+			   gfp_t gfpflags, int node, unsigned long caller __maybe_unused)
+			    __assume_slab_alignment __malloc;
+
+/**
+ * kmem_cache_alloc - Allocate an object
+ * @cachep: The cache to allocate from.
+ * @flags: See kmalloc().
+ *
+ * Allocate an object from this cache.  The flags are only relevant
+ * if the cache has no available objects.
+ *
+ * Return: pointer to the new object or %NULL in case of error
+ */
+static __always_inline __malloc
+void *kmem_cache_alloc(struct kmem_cache *s, gfp_t flags)
+{
+	return __kmem_cache_alloc_node(s, NULL, flags, NUMA_NO_NODE, _THIS_IP_);
+}
+
+/**
+ * kmem_cache_alloc_node - Allocate an object on the specified node
+ * @s: The cache to allocate from.
+ * @flags: See kmalloc().
+ * @node: node number of the target node.
+ *
+ * Identical to kmem_cache_alloc but it will allocate memory on the given
+ * node, which can improve the performance for cpu bound structures.
+ *
+ * Fallback to other node is possible if __GFP_THISNODE is not set.
+ *
+ * Return: pointer to the new object or %NULL in case of error
+ */
+static __always_inline __malloc
+void *kmem_cache_alloc_node(struct kmem_cache *s, gfp_t flags, int node)
+{
+	return __kmem_cache_alloc_node(s, NULL, flags, node, _THIS_IP_);
+}
+
+static __always_inline __malloc
+void *kmem_cache_alloc_lru(struct kmem_cache *s, struct list_lru *lru, gfp_t gfpflags)
+{
+	return __kmem_cache_alloc_node(s, lru, gfpflags, NUMA_NO_NODE, _THIS_IP_);
+}
+
 void kmem_cache_free(struct kmem_cache *s, void *objp);
 
 /*
@@ -452,9 +495,6 @@ static __always_inline void kfree_bulk(size_t size, void **p)
 {
 	kmem_cache_free_bulk(NULL, size, p);
 }
-
-void *kmem_cache_alloc_node(struct kmem_cache *s, gfp_t flags, int node) __assume_slab_alignment
-									 __malloc;
 
 #ifdef CONFIG_TRACING
 extern void *kmem_cache_alloc_trace(struct kmem_cache *s, gfp_t flags, size_t size)
