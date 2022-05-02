@@ -90,11 +90,23 @@ void update_page_count(int level, unsigned long pages)
 	spin_unlock(&pgd_lock);
 }
 
-static void split_page_count(int level)
+static void split_page_count(unsigned long address, int level)
 {
+	unsigned long pfn;
+	char *name = (level == PG_LEVEL_2M) ? "2M" : "1G";
+
+	if (!virt_addr_valid(address))
+		return;
+
+	pfn = PFN_DOWN(__pa(address));
+	if (!pfn_range_is_mapped(pfn, pfn + 1))
+		return;
+
 	if (direct_pages_count[level] == 0)
 		return;
 
+	printk("[PAGE ATTR] count split. addr = 0x%lx, level = %s, count = %ld",
+		address, name, direct_pages_count[level]);
 	direct_pages_count[level]--;
 	if (system_state == SYSTEM_RUNNING) {
 		if (level == PG_LEVEL_2M)
@@ -103,6 +115,33 @@ static void split_page_count(int level)
 			count_vm_event(DIRECT_MAP_LEVEL3_SPLIT);
 	}
 	direct_pages_count[level - 1] += PTRS_PER_PTE;
+}
+
+static void merge_page_count(unsigned long address, int level)
+{
+	unsigned long pfn;
+	char *name = (level == PG_LEVEL_4K) ? "4K" : "2M";
+
+	if (!virt_addr_valid(address))
+		return;
+
+	pfn = PFN_DOWN(__pa(address));
+	if (!pfn_range_is_mapped(pfn, pfn + 1))
+		return;
+
+	if (direct_pages_count[level] == 0)
+		return;
+
+	printk("[PAGE ATTR] count merge. addr = 0x%lx, level = %s, count = %ld",
+		address, name, direct_pages_count[level]);
+	direct_pages_count[level] -= PTRS_PER_PTE;
+	if (system_state == SYSTEM_RUNNING) {
+		if (level == PG_LEVEL_4K)
+			count_vm_event(DIRECT_MAP_LEVEL1_MERGE);
+		else if (level == PG_LEVEL_2M)
+			count_vm_event(DIRECT_MAP_LEVEL2_MERGE);
+	}
+	direct_pages_count[level + 1]++;
 }
 
 void arch_report_meminfo(struct seq_file *m)
@@ -122,6 +161,7 @@ void arch_report_meminfo(struct seq_file *m)
 }
 #else
 static inline void split_page_count(int level) { }
+static inline void merge_page_count(int level) { }
 #endif
 
 #ifdef CONFIG_X86_CPA_STATISTICS
@@ -773,6 +813,50 @@ static pgprot_t pgprot_clear_protnone_bits(pgprot_t prot)
 	return prot;
 }
 
+static bool should_merge_mapping(pte_t *first_pte, pte_t *updated,
+				 unsigned n_ptrs, unsigned pfn_diff)
+{
+	int i;
+	pte_t *ptep = first_pte;
+
+	/* PMD cannot have RO mapping */
+	if (!(pte_flags(*updated) & _PAGE_RW))
+		return false;
+
+	for (i = 0; i < n_ptrs; i++, ptep++) {
+		if (pte_none(*ptep) || pte_flags(*ptep) != pte_flags(*updated))
+			return false;
+
+		if (!i) {
+			int pfn, pfn_prev;
+
+			pfn = pte_pfn(*ptep);
+			pfn_prev = pte_pfn(*(ptep - 1));
+
+			/* Mapping is not contiguous */
+			if (!pfn && !pfn_prev && (pfn - pfn_prev) != pfn_diff)
+				return false;
+		}
+	}
+
+	return true;
+}
+
+static void merge_mapping(pte_t *kpte, pte_t *new_pte)
+{
+	pte_t *first_entry;
+	void *pgtable;
+	pgprot_t prot;
+
+	prot = __pgprot((pte_flags(*new_pte) & (~_PAGE_PAT)) | _PAGE_PSE);
+	pgtable = __va((phys_addr_t)pte_pfn(*kpte) << PAGE_SHIFT);
+	first_entry = (pte_t *)pgtable;
+
+	set_pte_atomic(kpte, pfn_pte(pte_pfn(*first_entry), prot));
+	pte_free(&init_mm, virt_to_page(pgtable));
+}
+
+
 static int __should_split_large_page(pte_t *kpte, unsigned long address,
 				     struct cpa_data *cpa)
 {
@@ -780,6 +864,10 @@ static int __should_split_large_page(pte_t *kpte, unsigned long address,
 	pgprot_t old_prot, new_prot, req_prot, chk_prot;
 	pte_t new_pte, *tmp;
 	enum pg_level level;
+	pgd_t *pgd = pgd_offset_k(address);
+	p4d_t *p4d = p4d_offset(pgd, address);
+	pud_t *pud = pud_offset(p4d, address);
+	pmd_t *pmd = pmd_offset(pud, address);
 
 	/*
 	 * Check for races, another CPU might have split this page
@@ -913,6 +1001,19 @@ static int __should_split_large_page(pte_t *kpte, unsigned long address,
 	__set_pmd_pte(kpte, address, new_pte);
 	cpa->flags |= CPA_FLUSHTLB;
 	cpa_inc_lp_preserved(level);
+
+	if (should_merge_mapping((pte_t *)pmd_page_vaddr(*pmd), kpte, PTRS_PER_PTE, 1)) {
+		merge_mapping((pte_t *)pmd, kpte);
+		merge_page_count(address, PG_LEVEL_4K);
+	} else {
+		return 0;
+	}
+
+	if (should_merge_mapping((pte_t *)pud_pgtable(*pud), kpte, PTRS_PER_PMD, PTRS_PER_PMD)) {
+		merge_mapping((pte_t *)pud, kpte);
+		merge_page_count(address, PG_LEVEL_2M);
+	}
+
 	return 0;
 }
 
@@ -1032,12 +1133,7 @@ __split_large_page(struct cpa_data *cpa, pte_t *kpte, unsigned long address,
 	for (i = 0; i < PTRS_PER_PTE; i++, pfn += pfninc, lpaddr += lpinc)
 		split_set_pte(cpa, pbase + i, pfn, ref_prot, lpaddr, lpinc);
 
-	if (virt_addr_valid(address)) {
-		unsigned long pfn = PFN_DOWN(__pa(address));
-
-		if (pfn_range_is_mapped(pfn, pfn + 1))
-			split_page_count(level);
-	}
+	split_page_count(address, level);
 
 	/*
 	 * Install the new, split up pagetable.
@@ -1519,12 +1615,15 @@ static int __cpa_process_fault(struct cpa_data *cpa, unsigned long vaddr,
 
 static int __change_page_attr(struct cpa_data *cpa, int primary)
 {
-	unsigned long address;
+	unsigned long address = __cpa_addr(cpa, cpa->curpage);
 	int do_split, err;
 	unsigned int level;
 	pte_t *kpte, old_pte;
+	pgd_t *pgd = pgd_offset_k(address);
+	p4d_t *p4d = p4d_offset(pgd, address);
+	pud_t *pud = pud_offset(p4d, address);
+	pmd_t *pmd = pmd_offset(pud, address);
 
-	address = __cpa_addr(cpa, cpa->curpage);
 repeat:
 	kpte = _lookup_address_cpa(cpa, address, &level);
 	if (!kpte)
@@ -1556,14 +1655,25 @@ repeat:
 		 */
 		new_pte = pfn_pte(pfn, new_prot);
 		cpa->pfn = pfn;
-		/*
-		 * Do we really change anything ?
-		 */
 		if (pte_val(old_pte) != pte_val(new_pte)) {
 			set_pte_atomic(kpte, new_pte);
 			cpa->flags |= CPA_FLUSHTLB;
 		}
+
 		cpa->numpages = 1;
+
+		if (should_merge_mapping((pte_t *)pmd_page_vaddr(*pmd), kpte, PTRS_PER_PTE, 1)) {
+			merge_mapping((pte_t *)pmd, kpte);
+			merge_page_count(address, PG_LEVEL_4K);
+		} else {
+			return 0;
+		}
+
+		if (should_merge_mapping((pte_t *)pud_pgtable(*pud), kpte, PTRS_PER_PMD, PTRS_PER_PTE)) {
+			merge_mapping((pte_t *)pud, kpte);
+			merge_page_count(address, PG_LEVEL_2M);
+		}
+
 		return 0;
 	}
 
