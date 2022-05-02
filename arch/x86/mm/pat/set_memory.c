@@ -41,6 +41,8 @@
 struct cpa_data {
 	unsigned long	*vaddr;
 	pgd_t		*pgd;
+	pud_t		*pud;
+	pmd_t		*pmd;
 	pgprot_t	mask_set;
 	pgprot_t	mask_clr;
 	unsigned long	numpages;
@@ -90,11 +92,23 @@ void update_page_count(int level, unsigned long pages)
 	spin_unlock(&pgd_lock);
 }
 
-static void split_page_count(int level)
+static void split_page_count(unsigned long address, int level)
 {
+	unsigned long pfn;
+	char *name = (level == PG_LEVEL_2M) ? "2M" : "1G";
+
+	if (!virt_addr_valid(address))
+		return;
+
+	pfn = PFN_DOWN(__pa(address));
+	if (!pfn_range_is_mapped(pfn, pfn + 1))
+		return;
+
 	if (direct_pages_count[level] == 0)
 		return;
 
+	printk("[PAGE ATTR] count split. addr = 0x%lx, level = %s, count = %ld\n",
+		address, name, direct_pages_count[level]);
 	direct_pages_count[level]--;
 	if (system_state == SYSTEM_RUNNING) {
 		if (level == PG_LEVEL_2M)
@@ -103,6 +117,33 @@ static void split_page_count(int level)
 			count_vm_event(DIRECT_MAP_LEVEL3_SPLIT);
 	}
 	direct_pages_count[level - 1] += PTRS_PER_PTE;
+}
+
+static void merge_page_count(unsigned long address, int level)
+{
+	unsigned long pfn;
+	char *name = (level == PG_LEVEL_4K) ? "4K" : "2M";
+
+	if (!virt_addr_valid(address))
+		return;
+
+	pfn = PFN_DOWN(__pa(address));
+	if (!pfn_range_is_mapped(pfn, pfn + 1))
+		return;
+
+	if (direct_pages_count[level] == 0)
+		return;
+
+	printk("[PAGE ATTR] count merge. addr = 0x%lx, level = %s, count = %ld\n",
+		address, name, direct_pages_count[level]);
+	direct_pages_count[level] -= PTRS_PER_PTE;
+	if (system_state == SYSTEM_RUNNING) {
+		if (level == PG_LEVEL_4K)
+			count_vm_event(DIRECT_MAP_LEVEL1_MERGE);
+		else if (level == PG_LEVEL_2M)
+			count_vm_event(DIRECT_MAP_LEVEL2_MERGE);
+	}
+	direct_pages_count[level + 1]++;
 }
 
 void arch_report_meminfo(struct seq_file *m)
@@ -121,7 +162,8 @@ void arch_report_meminfo(struct seq_file *m)
 			direct_pages_count[PG_LEVEL_1G] << 20);
 }
 #else
-static inline void split_page_count(int level) { }
+static inline void split_page_count(unsigned long address, int level) { }
+static inline void merge_page_count(unsigned long address, int level) { }
 #endif
 
 #ifdef CONFIG_X86_CPA_STATISTICS
@@ -652,11 +694,51 @@ EXPORT_SYMBOL_GPL(lookup_address_in_mm);
 static pte_t *_lookup_address_cpa(struct cpa_data *cpa, unsigned long address,
 				  unsigned int *level)
 {
-	if (cpa->pgd)
-		return lookup_address_in_pgd(cpa->pgd + pgd_index(address),
-					       address, level);
+	pgd_t *pgd;
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t *pmd;
 
-	return lookup_address(address, level);
+	if (cpa->pgd)
+		pgd = cpa->pgd + pgd_index(address);
+	else
+		pgd = pgd_offset_k(address);
+
+
+	*level = PG_LEVEL_NONE;
+
+	if (pgd_none(*pgd))
+		return NULL;
+
+	p4d = p4d_offset(pgd, address);
+	if (p4d_none(*p4d))
+		return NULL;
+
+	*level = PG_LEVEL_512G;
+	if (p4d_large(*p4d) || !p4d_present(*p4d))
+		return (pte_t *)p4d;
+
+	pud = pud_offset(p4d, address);
+	cpa->pud = pud;
+	if (pud_none(*pud))
+		return NULL;
+
+	*level = PG_LEVEL_1G;
+	if (pud_large(*pud) || !pud_present(*pud))
+		return (pte_t *)pud;
+
+	pmd = pmd_offset(pud, address);
+	cpa->pmd = pmd;
+	if (pmd_none(*pmd))
+		return NULL;
+
+	*level = PG_LEVEL_2M;
+	if (pmd_large(*pmd) || !pmd_present(*pmd))
+		return (pte_t *)pmd;
+
+	*level = PG_LEVEL_4K;
+
+	return pte_offset_kernel(pmd, address);
 }
 
 /*
@@ -771,6 +853,81 @@ static pgprot_t pgprot_clear_protnone_bits(pgprot_t prot)
 		pgprot_val(prot) &= ~_PAGE_GLOBAL;
 
 	return prot;
+}
+
+static bool __always_inline standard_prot(pgprot_t prot)
+{
+	prot = __pgprot(pgprot_val(prot) & ~(_PAGE_PSE | _PAGE_PAT));
+	return pgprot_val(prot) == pgprot_val(PAGE_KERNEL);
+}
+
+static bool can_merge(unsigned long address, pte_t *parent, pgprot_t new_prot)
+{
+	struct page *page = pfn_to_page(pte_pfn(*parent));
+
+	if (!standard_prot(new_prot))
+		return false;
+
+	/* Not guaranteed to be physically continuous */
+	if (!virt_addr_valid(address))
+		return false;
+
+	if (!page->split)
+		return false;
+
+	if (page->split_count)
+		return false;
+
+	return true;
+}
+
+static void update_foo(pte_t *kpte, pgprot_t old_prot, pgprot_t new_prot, enum pg_level level)
+{
+
+	const char *name = (level == PG_LEVEL_4K) ? "4K" :  (level == PG_LEVEL_2M ? "2M" : "1G");
+	struct page *page = pfn_to_page(pte_pfn(*kpte));
+
+	if (!page->split)
+		return;
+
+	if (standard_prot(old_prot) && !standard_prot(new_prot))
+		page->split_count++;
+	else if (!standard_prot(old_prot) && standard_prot(new_prot))
+		page->split_count--;
+
+	// printk("merged-level = %s, parent's split_count = %d\n", name, page->split_count);
+
+	/* Overflowed */
+	if (page->split_count > PTRS_PER_PTE)
+		dump_stack();
+}
+
+static void merge_mapping(pte_t *parent, pte_t *kpte, pgprot_t new_prot)
+{
+	pte_t *first_entry;
+	void *pgtable;
+	struct page *page;
+	pgprot_t old_prot = pte_pgprot(*kpte);
+
+	pgtable = phys_to_virt(pte_pfn(*kpte) << PAGE_SHIFT);
+	page = virt_to_page(pgtable);
+
+	/* let it point address of first entry */
+	first_entry = (pte_t *)pgtable;
+	new_prot = __pgprot(pgprot_val(pgprot_4k_2_large(new_prot)) | _PAGE_PSE);
+	set_pte_atomic(kpte, pfn_pte(pte_pfn(*first_entry), new_prot));
+
+	/* free page table */
+	page->split = 0;
+	page->split_count = 0;
+	pte_free(&init_mm, page);
+
+	/* when PTEs are merged into PMD, split_count of PUD should be udpated */
+	if (parent) {
+		page = phys_to_virt(pte_pfn(*parent) << PAGE_SHIFT);
+		if (page->split && page->split_count)
+			page->split_count--;
+	}
 }
 
 static int __should_split_large_page(pte_t *kpte, unsigned long address,
@@ -913,6 +1070,15 @@ static int __should_split_large_page(pte_t *kpte, unsigned long address,
 	__set_pmd_pte(kpte, address, new_pte);
 	cpa->flags |= CPA_FLUSHTLB;
 	cpa_inc_lp_preserved(level);
+
+	if (level == PG_LEVEL_2M) {
+		update_foo((pte_t *)cpa->pud, old_prot, new_prot, PG_LEVEL_2M);
+		if (can_merge(address, (pte_t *)cpa->pud, new_prot)) {
+			merge_mapping(NULL, (pte_t *)cpa->pud, new_prot);
+			merge_page_count(address, PG_LEVEL_2M);
+		}
+	}
+
 	return 0;
 }
 
@@ -1029,15 +1195,19 @@ __split_large_page(struct cpa_data *cpa, pte_t *kpte, unsigned long address,
 	 * Get the target pfn from the original entry:
 	 */
 	pfn = ref_pfn;
-	for (i = 0; i < PTRS_PER_PTE; i++, pfn += pfninc, lpaddr += lpinc)
+	base->split_count = 0;
+	base->split = 1;
+	for (i = 0; i < PTRS_PER_PTE; i++, pfn += pfninc, lpaddr += lpinc) {
+		pgprot_t prot;
+
 		split_set_pte(cpa, pbase + i, pfn, ref_prot, lpaddr, lpinc);
-
-	if (virt_addr_valid(address)) {
-		unsigned long pfn = PFN_DOWN(__pa(address));
-
-		if (pfn_range_is_mapped(pfn, pfn + 1))
-			split_page_count(level);
+		prot = pte_pgprot(*(pbase + i));
+		if (!standard_prot(prot)) {
+			base->split_count++;
+		}
 	}
+
+	split_page_count(address, level);
 
 	/*
 	 * Install the new, split up pagetable.
@@ -1519,12 +1689,11 @@ static int __cpa_process_fault(struct cpa_data *cpa, unsigned long vaddr,
 
 static int __change_page_attr(struct cpa_data *cpa, int primary)
 {
-	unsigned long address;
+	unsigned long address = __cpa_addr(cpa, cpa->curpage);
 	int do_split, err;
 	unsigned int level;
 	pte_t *kpte, old_pte;
 
-	address = __cpa_addr(cpa, cpa->curpage);
 repeat:
 	kpte = _lookup_address_cpa(cpa, address, &level);
 	if (!kpte)
@@ -1536,6 +1705,7 @@ repeat:
 
 	if (level == PG_LEVEL_4K) {
 		pte_t new_pte;
+		pgprot_t old_prot = pte_pgprot(old_pte);
 		pgprot_t new_prot = pte_pgprot(old_pte);
 		unsigned long pfn = pte_pfn(old_pte);
 
@@ -1556,14 +1726,23 @@ repeat:
 		 */
 		new_pte = pfn_pte(pfn, new_prot);
 		cpa->pfn = pfn;
-		/*
-		 * Do we really change anything ?
-		 */
 		if (pte_val(old_pte) != pte_val(new_pte)) {
 			set_pte_atomic(kpte, new_pte);
 			cpa->flags |= CPA_FLUSHTLB;
 		}
+
 		cpa->numpages = 1;
+
+		update_foo((pte_t *)cpa->pmd, old_prot, new_prot, PG_LEVEL_4K);
+		if (can_merge(address, (pte_t *)cpa->pmd, new_prot)) {
+			merge_mapping((pte_t *) cpa->pud, (pte_t *)cpa->pmd, new_prot);
+			merge_page_count(address, PG_LEVEL_4K);
+
+			if (can_merge(address, (pte_t *)cpa->pud, new_prot)) {
+				merge_mapping(NULL, (pte_t *)cpa->pud, new_prot);
+				merge_page_count(address, PG_LEVEL_2M);
+			}
+		}
 		return 0;
 	}
 
