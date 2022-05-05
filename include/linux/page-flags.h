@@ -138,6 +138,11 @@ enum pageflags {
 #ifdef CONFIG_KASAN_HW_TAGS
 	PG_skip_kasan_poison,
 #endif
+
+#ifdef CONFIG_X86_64
+	/* Page table entry of the page cannot be merged */
+	PG_split,
+#endif
 	__NR_PAGEFLAGS,
 
 	PG_readahead = PG_reclaim,
@@ -536,6 +541,11 @@ PAGEFLAG(Reclaim, reclaim, PF_NO_TAIL)
 	TESTCLEARFLAG(Reclaim, reclaim, PF_NO_TAIL)
 PAGEFLAG(Readahead, readahead, PF_NO_COMPOUND)
 	TESTCLEARFLAG(Readahead, readahead, PF_NO_COMPOUND)
+
+#ifdef CONFIG_X86_64
+PAGEFLAG(Split, split, PF_ANY)
+	TESTCLEARFLAG(Split, split, PF_ANY)
+#endif
 
 #ifdef CONFIG_HIGHMEM
 /*
