@@ -2174,10 +2174,11 @@ int set_pages_rw(struct page *page, int numpages)
 static int __set_pages_p(struct page *page, int numpages)
 {
 	unsigned long tempaddr = (unsigned long) page_address(page);
+	pgprot_t mask_set = __pgprot_mask(_PAGE_PRESENT | _PAGE_RW | _PAGE_GLOBAL);
 	struct cpa_data cpa = { .vaddr = &tempaddr,
 				.pgd = NULL,
 				.numpages = numpages,
-				.mask_set = __pgprot(_PAGE_PRESENT | _PAGE_RW),
+				.mask_set = mask_set,
 				.mask_clr = __pgprot(0),
 				.flags = 0};
 
