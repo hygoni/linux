@@ -2177,7 +2177,7 @@ static int __set_pages_p(struct page *page, int numpages)
 	struct cpa_data cpa = { .vaddr = &tempaddr,
 				.pgd = NULL,
 				.numpages = numpages,
-				.mask_set = __pgprot(_PAGE_PRESENT | _PAGE_RW),
+				.mask_set = PAGE_KERNEL,
 				.mask_clr = __pgprot(0),
 				.flags = 0};
 
