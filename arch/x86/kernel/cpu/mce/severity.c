@@ -247,7 +247,7 @@ static bool is_copy_from_user(struct pt_regs *regs)
 		return false;
 	}
 
-	if (fault_in_kernel_space(addr))
+	if (is_kernel_space(addr))
 		return false;
 
 	current->mce_vaddr = (void __user *)addr;

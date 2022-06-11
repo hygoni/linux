@@ -1125,7 +1125,7 @@ access_error(unsigned long error_code, struct vm_area_struct *vma)
 	return 0;
 }
 
-bool fault_in_kernel_space(unsigned long address)
+bool is_kernel_space(unsigned long address)
 {
 	/*
 	 * On 64-bit systems, the vsyscall page is at an address above
@@ -1482,7 +1482,7 @@ handle_page_fault(struct pt_regs *regs, unsigned long error_code,
 		return;
 
 	/* Was the fault on kernel-controlled part of the address space? */
-	if (unlikely(fault_in_kernel_space(address))) {
+	if (unlikely(is_kernel_space(address))) {
 		do_kern_addr_fault(regs, error_code, address);
 	} else {
 		do_user_addr_fault(regs, error_code, address);

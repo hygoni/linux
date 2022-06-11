@@ -20,6 +20,7 @@
 #include <linux/kernel.h>
 #include <linux/cc_platform.h>
 #include <linux/set_memory.h>
+#include <linux/efi.h>
 
 #include <asm/e820/api.h>
 #include <asm/processor.h>
@@ -1506,6 +1507,50 @@ static int __cpa_process_fault(struct cpa_data *cpa, unsigned long vaddr,
 	}
 }
 
+bool is_kernel_space(unsigned long address);
+
+static bool cpa_addr_valid(struct cpa_data *cpa, unsigned long address)
+{
+	if (is_kernel_space(address))
+		return true;
+
+	if (IS_ENABLED(CONFIG_EFI) && (cpa->pgd == efi_mm.pgd))
+		return true;
+
+	return false;
+}
+
+static bool cpa_prot_valid(struct cpa_data *cpa, pte_t *ptep)
+{
+	pgprot_t old_prot = pte_pgprot(*ptep);
+	pgprot_t new_prot;
+
+	if ((pgprot_val(old_prot) & (_PAGE_PRESENT | _PAGE_USER))
+				== (_PAGE_PRESENT | _PAGE_USER))
+		return false;
+
+	new_prot = old_prot;
+	pgprot_val(new_prot) &= ~pgprot_val(cpa->mask_clr);
+	pgprot_val(new_prot) |= pgprot_val(cpa->mask_set);
+
+	if ((pgprot_val(new_prot) & (_PAGE_PRESENT | _PAGE_USER))
+				== (_PAGE_PRESENT | _PAGE_USER))
+		return false;
+
+	return true;
+}
+
+static bool cpa_valid(struct cpa_data *cpa, unsigned long address, pte_t *ptep)
+{
+	if (!cpa_addr_valid(cpa, address))
+		return false;
+
+	if (!cpa_prot_valid(cpa, ptep))
+		return false;
+
+	return true;
+}
+
 static int __change_page_attr(struct cpa_data *cpa, int primary)
 {
 	unsigned long address;
@@ -1516,8 +1561,13 @@ static int __change_page_attr(struct cpa_data *cpa, int primary)
 	address = __cpa_addr(cpa, cpa->curpage);
 repeat:
 	kpte = _lookup_address_cpa(cpa, address, &level);
+
 	if (!kpte)
 		return __cpa_process_fault(cpa, address, primary);
+
+	if (WARN(!cpa_valid(cpa, address, kpte),
+		 KERN_WARNING "CPA: CPA does not work with user mappings"))
+		return -EINVAL;
 
 	old_pte = *kpte;
 	if (pte_none(old_pte))
