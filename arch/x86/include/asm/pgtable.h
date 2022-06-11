@@ -733,7 +733,9 @@ static inline int pte_same(pte_t a, pte_t b)
 
 static inline int pte_present(pte_t a)
 {
-	return pte_flags(a) & (_PAGE_PRESENT | _PAGE_PROTNONE);
+	return (pte_flags(a) & (_PAGE_PRESENT)) ||
+		((pte_flags(a) & (_PAGE_USER | _PAGE_PROTNONE)) ==
+				 (_PAGE_USER | _PAGE_PROTNONE));
 }
 
 #ifdef CONFIG_ARCH_HAS_PTE_DEVMAP
@@ -749,7 +751,8 @@ static inline bool pte_accessible(struct mm_struct *mm, pte_t a)
 	if (pte_flags(a) & _PAGE_PRESENT)
 		return true;
 
-	if ((pte_flags(a) & _PAGE_PROTNONE) &&
+	if (((pte_flags(a) & (_PAGE_USER |_PAGE_PROTNONE)) ==
+			     (_PAGE_USER |_PAGE_PROTNONE)) &&
 			atomic_read(&mm->tlb_flush_pending))
 		return true;
 
@@ -764,7 +767,14 @@ static inline int pmd_present(pmd_t pmd)
 	 * the _PAGE_PSE flag will remain set at all times while the
 	 * _PAGE_PRESENT bit is clear).
 	 */
-	return pmd_flags(pmd) & (_PAGE_PRESENT | _PAGE_PROTNONE | _PAGE_PSE);
+	if (pmd_flags(pmd) & (_PAGE_PRESENT | _PAGE_PSE))
+		return true;
+
+	if ((pmd_flags(pmd) & (_PAGE_USER | _PAGE_PROTNONE)) ==
+			      (_PAGE_USER | _PAGE_PROTNONE))
+		return true;
+
+	return false;
 }
 
 #ifdef CONFIG_NUMA_BALANCING
@@ -774,14 +784,16 @@ static inline int pmd_present(pmd_t pmd)
  */
 static inline int pte_protnone(pte_t pte)
 {
-	return (pte_flags(pte) & (_PAGE_PROTNONE | _PAGE_PRESENT))
-		== _PAGE_PROTNONE;
+	return !(pte_flags(pte) & _PAGE_PRESENT) &&
+		(pte_flags(pte) | (_PAGE_USER | _PAGE_PROTNONE)) ==
+				  (_PAGE_USER | _PAGE_PROTNONE);
 }
 
 static inline int pmd_protnone(pmd_t pmd)
 {
-	return (pmd_flags(pmd) & (_PAGE_PROTNONE | _PAGE_PRESENT))
-		== _PAGE_PROTNONE;
+	return !(pmd_flags(pmd) & _PAGE_PRESENT) &&
+		(pmd_flags(pmd) | (_PAGE_USER | _PAGE_PROTNONE)) ==
+				  (_PAGE_USER | _PAGE_PROTNONE);
 }
 #endif /* CONFIG_NUMA_BALANCING */
 
