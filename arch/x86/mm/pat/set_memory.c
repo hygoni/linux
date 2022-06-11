@@ -746,23 +746,6 @@ static void __set_pmd_pte(pte_t *kpte, unsigned long address, pte_t pte)
 #endif
 }
 
-static pgprot_t pgprot_clear_protnone_bits(pgprot_t prot)
-{
-	/*
-	 * _PAGE_GLOBAL means "global page" for present PTEs.
-	 * But, it is also used to indicate _PAGE_PROTNONE
-	 * for non-present PTEs.
-	 *
-	 * This ensures that a _PAGE_GLOBAL PTE going from
-	 * present to non-present is not confused as
-	 * _PAGE_PROTNONE.
-	 */
-	if (!(pgprot_val(prot) & _PAGE_PRESENT))
-		pgprot_val(prot) &= ~_PAGE_GLOBAL;
-
-	return prot;
-}
-
 static int __should_split_large_page(pte_t *kpte, unsigned long address,
 				     struct cpa_data *cpa)
 {
@@ -824,7 +807,6 @@ static int __should_split_large_page(pte_t *kpte, unsigned long address,
 	 * different bit positions in the two formats.
 	 */
 	req_prot = pgprot_4k_2_large(req_prot);
-	req_prot = pgprot_clear_protnone_bits(req_prot);
 	if (pgprot_val(req_prot) & _PAGE_PRESENT)
 		pgprot_val(req_prot) |= _PAGE_PSE;
 
@@ -1012,8 +994,6 @@ __split_large_page(struct cpa_data *cpa, pte_t *kpte, unsigned long address,
 		spin_unlock(&pgd_lock);
 		return 1;
 	}
-
-	ref_prot = pgprot_clear_protnone_bits(ref_prot);
 
 	/*
 	 * Get the target pfn from the original entry:
@@ -1245,8 +1225,6 @@ static void populate_pte(struct cpa_data *cpa,
 	pte_t *pte;
 
 	pte = pte_offset_kernel(pmd, start);
-
-	pgprot = pgprot_clear_protnone_bits(pgprot);
 
 	while (num_pages-- && start < end) {
 		set_pte(pte, pfn_pte(cpa->pfn, pgprot));
@@ -1585,8 +1563,6 @@ repeat:
 		/* Hand in lpsize = 0 to enforce the protection mechanism */
 		new_prot = static_protections(new_prot, address, pfn, 1, 0,
 					      CPA_PROTECT);
-
-		new_prot = pgprot_clear_protnone_bits(new_prot);
 
 		/*
 		 * We need to keep the pfn from the existing PTE,
