@@ -20,6 +20,7 @@
 #include <linux/kernel.h>
 #include <linux/cc_platform.h>
 #include <linux/set_memory.h>
+#include <linux/efi.h>
 
 #include <asm/e820/api.h>
 #include <asm/processor.h>
@@ -1514,6 +1515,11 @@ static int __change_page_attr(struct cpa_data *cpa, int primary)
 	pte_t *kpte, old_pte;
 
 	address = __cpa_addr(cpa, cpa->curpage);
+
+	if (WARN((IS_ENABLED(CONFIG_EFI) ? cpa->pgd != efi_mm.pgd : true)
+		  && address <= TASK_SIZE_MAX,
+		 KERN_WARNING "CPA: Got a user address"))
+		return -EINVAL;
 repeat:
 	kpte = _lookup_address_cpa(cpa, address, &level);
 	if (!kpte)
