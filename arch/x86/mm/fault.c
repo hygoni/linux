@@ -202,10 +202,10 @@ static inline pmd_t *vmalloc_sync_one(pgd_t *pgd, unsigned long address)
 	pmd = pmd_offset(pud, address);
 	pmd_k = pmd_offset(pud_k, address);
 
-	if (pmd_present(*pmd) != pmd_present(*pmd_k))
+	if (pmd_present_kernel(*pmd) != pmd_present_kernel(*pmd_k))
 		set_pmd(pmd, *pmd_k);
 
-	if (!pmd_present(*pmd_k))
+	if (!pmd_present_kernel(*pmd_k))
 		return NULL;
 	else
 		BUG_ON(pmd_pfn(*pmd) != pmd_pfn(*pmd_k));
@@ -253,7 +253,7 @@ static noinline int vmalloc_fault(unsigned long address)
 		return 0;
 
 	pte_k = pte_offset_kernel(pmd_k, address);
-	if (!pte_present(*pte_k))
+	if (!pte_present_kernel(*pte_k))
 		return -1;
 
 	return 0;
@@ -1045,14 +1045,14 @@ spurious_kernel_fault(unsigned long error_code, unsigned long address)
 		return spurious_kernel_fault_check(error_code, (pte_t *) pud);
 
 	pmd = pmd_offset(pud, address);
-	if (!pmd_present(*pmd))
+	if (!pmd_present_kernel(*pmd))
 		return 0;
 
 	if (pmd_large(*pmd))
 		return spurious_kernel_fault_check(error_code, (pte_t *) pmd);
 
 	pte = pte_offset_kernel(pmd, address);
-	if (!pte_present(*pte))
+	if (!pte_present_kernel(*pte))
 		return 0;
 
 	ret = spurious_kernel_fault_check(error_code, pte);

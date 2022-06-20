@@ -736,6 +736,11 @@ static inline int pte_present(pte_t a)
 	return pte_flags(a) & (_PAGE_PRESENT | _PAGE_PROTNONE);
 }
 
+static inline int pte_present_kernel(pte_t a)
+{
+	return pte_flags(a) & _PAGE_PRESENT;
+}
+
 #ifdef CONFIG_ARCH_HAS_PTE_DEVMAP
 static inline int pte_devmap(pte_t a)
 {
@@ -765,6 +770,11 @@ static inline int pmd_present(pmd_t pmd)
 	 * _PAGE_PRESENT bit is clear).
 	 */
 	return pmd_flags(pmd) & (_PAGE_PRESENT | _PAGE_PROTNONE | _PAGE_PSE);
+}
+
+static inline int pmd_present_kernel(pmd_t pmd)
+{
+	return pmd_flags(pmd) & _PAGE_PRESENT;
 }
 
 #ifdef CONFIG_NUMA_BALANCING

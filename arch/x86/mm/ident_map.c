@@ -11,7 +11,7 @@ static void ident_pmd_init(struct x86_mapping_info *info, pmd_t *pmd_page,
 	for (; addr < end; addr += PMD_SIZE) {
 		pmd_t *pmd = pmd_page + pmd_index(addr);
 
-		if (pmd_present(*pmd))
+		if (pmd_present_kernel(*pmd))
 			continue;
 
 		set_pmd(pmd, __pmd((addr - info->offset) | info->page_flag));

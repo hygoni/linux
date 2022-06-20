@@ -464,7 +464,7 @@ void __init native_pagetable_init(void)
 		p4d = p4d_offset(pgd, va);
 		pud = pud_offset(p4d, va);
 		pmd = pmd_offset(pud, va);
-		if (!pmd_present(*pmd))
+		if (!pmd_present_kernel(*pmd))
 			break;
 
 		/* should not be large page here */
@@ -475,7 +475,7 @@ void __init native_pagetable_init(void)
 		}
 
 		pte = pte_offset_kernel(pmd, va);
-		if (!pte_present(*pte))
+		if (!pte_present_kernel(*pte))
 			break;
 
 		printk(KERN_DEBUG "clearing pte for ram above max_low_pfn: pfn: %lx pmd: %p pmd phys: %lx pte: %p pte phys: %lx\n",

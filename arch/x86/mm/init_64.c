@@ -1069,7 +1069,7 @@ remove_pte_table(pte_t *pte_start, unsigned long addr, unsigned long end,
 		if (next > end)
 			next = end;
 
-		if (!pte_present(*pte))
+		if (!pte_present_kernel(*pte))
 			continue;
 
 		/*
@@ -1110,7 +1110,7 @@ remove_pmd_table(pmd_t *pmd_start, unsigned long addr, unsigned long end,
 	for (; addr < end; addr = next, pmd++) {
 		next = pmd_addr_end(addr, end);
 
-		if (!pmd_present(*pmd))
+		if (!pmd_present_kernel(*pmd))
 			continue;
 
 		if (pmd_large(*pmd)) {
@@ -1443,7 +1443,7 @@ int kern_addr_valid(unsigned long addr)
 		return pfn_valid(pud_pfn(*pud));
 
 	pmd = pmd_offset(pud, addr);
-	if (!pmd_present(*pmd))
+	if (!pmd_present_kernel(*pmd))
 		return 0;
 
 	if (pmd_large(*pmd))
