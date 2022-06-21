@@ -933,9 +933,9 @@ void *__do_kmalloc_node(size_t size, gfp_t flags, int node, unsigned long caller
 
 	if (unlikely(size > KMALLOC_MAX_CACHE_SIZE)) {
 		ret = kmalloc_large_node_notrace(size, flags, node);
-		trace_kmalloc_node(caller, ret, NULL,
-				   size, PAGE_SIZE << get_order(size),
-				   flags, node);
+		trace_kmalloc(_RET_IP_, ret, NULL,
+			      size, PAGE_SIZE << get_order(size),
+			      flags, node);
 		return ret;
 	}
 
@@ -946,8 +946,8 @@ void *__do_kmalloc_node(size_t size, gfp_t flags, int node, unsigned long caller
 
 	ret = __kmem_cache_alloc_node(s, flags, node, size, caller);
 	ret = kasan_kmalloc(s, ret, size, flags);
-	trace_kmalloc_node(caller, ret, s, size,
-			   s->size, flags, node);
+	trace_kmalloc(_RET_IP_, ret, s, size,
+		      s->size, flags, node);
 	return ret;
 }
 
@@ -1076,7 +1076,7 @@ void *kmalloc_large(size_t size, gfp_t flags)
 	void *ret = __kmalloc_large_node_notrace(size, flags, NUMA_NO_NODE);
 
 	trace_kmalloc(_RET_IP_, ret, NULL, size,
-		      PAGE_SIZE << get_order(size), flags);
+		      PAGE_SIZE << get_order(size), flags, NUMA_NO_NODE);
 	return ret;
 }
 EXPORT_SYMBOL(kmalloc_large);
@@ -1090,8 +1090,8 @@ void *kmalloc_large_node(size_t size, gfp_t flags, int node)
 {
 	void *ret = __kmalloc_large_node_notrace(size, flags, node);
 
-	trace_kmalloc_node(_RET_IP_, ret, NULL, size,
-			   PAGE_SIZE << get_order(size), flags, node);
+	trace_kmalloc(_RET_IP_, ret, NULL, size,
+		      PAGE_SIZE << get_order(size), flags, node);
 	return ret;
 }
 EXPORT_SYMBOL(kmalloc_large_node);
@@ -1426,8 +1426,6 @@ EXPORT_SYMBOL(ksize);
 /* Tracepoints definitions. */
 EXPORT_TRACEPOINT_SYMBOL(kmalloc);
 EXPORT_TRACEPOINT_SYMBOL(kmem_cache_alloc);
-EXPORT_TRACEPOINT_SYMBOL(kmalloc_node);
-EXPORT_TRACEPOINT_SYMBOL(kmem_cache_alloc_node);
 EXPORT_TRACEPOINT_SYMBOL(kfree);
 EXPORT_TRACEPOINT_SYMBOL(kmem_cache_free);
 
