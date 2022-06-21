@@ -275,6 +275,10 @@ void create_kmalloc_caches(slab_flags_t);
 struct kmem_cache *kmalloc_slab(size_t, gfp_t);
 
 void *kmalloc_large_node_notrace(size_t size, gfp_t flags, int node);
+void *__kmem_cache_alloc_node(struct kmem_cache *s, gfp_t gfpflags,
+			      int node, size_t orig_size,
+			      unsigned long caller);
+void __kmem_cache_free(struct kmem_cache *s, void *x, unsigned long caller);
 #endif
 
 gfp_t kmalloc_fix_flags(gfp_t flags);
