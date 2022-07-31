@@ -178,6 +178,11 @@ do {					\
 } while (0)
 #endif
 
+#if defined(CONFIG_HAVE_CMPXCHG_DOUBLE) && \
+    defined(CONFIG_HAVE_ALIGNED_STRUCT_PAGE)
+DEFINE_STATIC_KEY_TRUE(cmpxchg_double_enabled);
+#endif
+
 #ifdef CONFIG_SLUB_DEBUG
 #ifdef CONFIG_SLUB_DEBUG_ON
 DEFINE_STATIC_KEY_TRUE(slub_debug_enabled);
@@ -257,8 +262,6 @@ static inline bool kmem_cache_has_cpu_partial(struct kmem_cache *s)
 /* Internal SLUB flags */
 /* Poison object */
 #define __OBJECT_POISON		((slab_flags_t __force)0x80000000U)
-/* Use cmpxchg_double */
-#define __CMPXCHG_DOUBLE	((slab_flags_t __force)0x40000000U)
 
 /*
  * Tracking user of a slab.
@@ -486,7 +489,7 @@ static inline bool __cmpxchg_double_slab(struct kmem_cache *s, struct slab *slab
 		lockdep_assert_irqs_disabled();
 #if defined(CONFIG_HAVE_CMPXCHG_DOUBLE) && \
     defined(CONFIG_HAVE_ALIGNED_STRUCT_PAGE)
-	if (s->flags & __CMPXCHG_DOUBLE) {
+	if (static_branch_likely(&cmpxchg_double_enabled)) {
 		if (cmpxchg_double(&slab->freelist, &slab->counters,
 				   freelist_old, counters_old,
 				   freelist_new, counters_new))
@@ -525,7 +528,7 @@ static inline bool cmpxchg_double_slab(struct kmem_cache *s, struct slab *slab,
 {
 #if defined(CONFIG_HAVE_CMPXCHG_DOUBLE) && \
     defined(CONFIG_HAVE_ALIGNED_STRUCT_PAGE)
-	if (s->flags & __CMPXCHG_DOUBLE) {
+	if (static_branch_likely(&cmpxchg_double_enabled)) {
 		if (cmpxchg_double(&slab->freelist, &slab->counters,
 				   freelist_old, counters_old,
 				   freelist_new, counters_new))
@@ -4217,11 +4220,12 @@ static int kmem_cache_open(struct kmem_cache *s, slab_flags_t flags)
 		}
 	}
 
+
 #if defined(CONFIG_HAVE_CMPXCHG_DOUBLE) && \
     defined(CONFIG_HAVE_ALIGNED_STRUCT_PAGE)
-	if (system_has_cmpxchg_double() && (s->flags & SLAB_NO_CMPXCHG) == 0)
-		/* Enable fast mode */
-		s->flags |= __CMPXCHG_DOUBLE;
+	if (static_key_enabled(&cmpxchg_double_enabled) &&
+			(!system_has_cmpxchg_double() || s->flags & SLAB_NO_CMPXCHG))
+		static_branch_disable(&cmpxchg_double_enabled);
 #endif
 
 	/*
