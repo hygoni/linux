@@ -11,6 +11,7 @@
 #include <linux/kobject.h>
 #include <linux/reciprocal_div.h>
 #include <linux/local_lock.h>
+#include <asm-generic/xcmpxchg.h>
 
 enum stat_item {
 	ALLOC_FASTPATH,		/* Allocation from cpu slab */
@@ -46,8 +47,7 @@ enum stat_item {
  * with this_cpu_cmpxchg_double() alignment requirements.
  */
 struct kmem_cache_cpu {
-	void **freelist;	/* Pointer to next available object */
-	unsigned long tid;	/* Globally unique transaction id */
+	struct xcmpxchg xcmpxchg;
 	struct slab *slab;	/* The slab from which we are allocating */
 #ifdef CONFIG_SLUB_CPU_PARTIAL
 	struct slab *partial;	/* Partially allocated frozen slabs */

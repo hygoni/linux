@@ -477,6 +477,12 @@ config HAVE_CMPXCHG_LOCAL
 config HAVE_CMPXCHG_DOUBLE
 	bool
 
+config HAVE_LL_SC_CMPXCHG
+	bool
+
+config HAVE_CMPXCHG_DOUBLE_LOCAL
+	bool
+
 config ARCH_WEAK_RELEASE_ACQUIRE
 	bool
 

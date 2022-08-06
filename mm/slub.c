@@ -2291,26 +2291,6 @@ static void *get_partial(struct kmem_cache *s, gfp_t flags, int node,
 	return get_any_partial(s, flags, ret_slab);
 }
 
-#ifdef CONFIG_PREEMPTION
-/*
- * Calculate the next globally unique transaction for disambiguation
- * during cmpxchg. The transactions start with the cpu number and are then
- * incremented by CONFIG_NR_CPUS.
- */
-#define TID_STEP  roundup_pow_of_two(CONFIG_NR_CPUS)
-#else
-/*
- * No preemption supported therefore also no need to check for
- * different cpus.
- */
-#define TID_STEP 1
-#endif
-
-static inline unsigned long next_tid(unsigned long tid)
-{
-	return tid + TID_STEP;
-}
-
 #ifdef SLUB_DEBUG_CMPXCHG
 static inline unsigned int tid_to_cpu(unsigned long tid)
 {
@@ -2360,7 +2340,7 @@ static void init_kmem_cache_cpus(struct kmem_cache *s)
 	for_each_possible_cpu(cpu) {
 		c = per_cpu_ptr(s->cpu_slab, cpu);
 		local_lock_init(&c->lock);
-		c->tid = init_tid(cpu);
+		xcmpxchg_init(&c->xcmpxchg, cpu);
 	}
 }
 
@@ -2643,11 +2623,10 @@ static inline void flush_slab(struct kmem_cache *s, struct kmem_cache_cpu *c)
 	local_lock_irqsave(&s->cpu_slab->lock, flags);
 
 	slab = c->slab;
-	freelist = c->freelist;
+	freelist = xcmpxchg_read(&c->xcmpxchg);
 
 	c->slab = NULL;
-	c->freelist = NULL;
-	c->tid = next_tid(c->tid);
+	xcmpxchg_set(&c->xcmpxchg, NULL);
 
 	local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 
@@ -2660,12 +2639,11 @@ static inline void flush_slab(struct kmem_cache *s, struct kmem_cache_cpu *c)
 static inline void __flush_cpu_slab(struct kmem_cache *s, int cpu)
 {
 	struct kmem_cache_cpu *c = per_cpu_ptr(s->cpu_slab, cpu);
-	void *freelist = c->freelist;
+	void *freelist = xcmpxchg_read(&c->xcmpxchg);
 	struct slab *slab = c->slab;
 
 	c->slab = NULL;
-	c->freelist = NULL;
-	c->tid = next_tid(c->tid);
+	xcmpxchg_set(&c->xcmpxchg, NULL);
 
 	if (slab) {
 		deactivate_slab(s, slab, freelist);
@@ -2955,7 +2933,7 @@ redo:
 		local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 		goto reread_slab;
 	}
-	freelist = c->freelist;
+	freelist = xcmpxchg_read(&c->xcmpxchg);
 	if (freelist)
 		goto load_freelist;
 
@@ -2963,7 +2941,7 @@ redo:
 
 	if (!freelist) {
 		c->slab = NULL;
-		c->tid = next_tid(c->tid);
+		xcmpxchg_next_tid(&c->xcmpxchg);
 		local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 		stat(s, DEACTIVATE_BYPASS);
 		goto new_slab;
@@ -2981,8 +2959,7 @@ load_freelist:
 	 * That slab must be frozen for per cpu allocations to work.
 	 */
 	VM_BUG_ON(!c->slab->frozen);
-	c->freelist = get_freepointer(s, freelist);
-	c->tid = next_tid(c->tid);
+	xcmpxchg_set(&c->xcmpxchg, get_freepointer(s, freelist));
 	local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 	return freelist;
 
@@ -2993,10 +2970,9 @@ deactivate_slab:
 		local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 		goto reread_slab;
 	}
-	freelist = c->freelist;
+	freelist = xcmpxchg_read(&c->xcmpxchg);
 	c->slab = NULL;
-	c->freelist = NULL;
-	c->tid = next_tid(c->tid);
+	xcmpxchg_set(&c->xcmpxchg, NULL);
 	local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 	deactivate_slab(s, slab, freelist);
 
@@ -3071,12 +3047,11 @@ retry_load_slab:
 
 	local_lock_irqsave(&s->cpu_slab->lock, flags);
 	if (unlikely(c->slab)) {
-		void *flush_freelist = c->freelist;
+		void *flush_freelist = xcmpxchg_read(&c->xcmpxchg);
 		struct slab *flush_slab = c->slab;
 
 		c->slab = NULL;
-		c->freelist = NULL;
-		c->tid = next_tid(c->tid);
+		xcmpxchg_set(&c->xcmpxchg, NULL);
 
 		local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 
@@ -3176,7 +3151,7 @@ redo:
 	 * and cmpxchg later will validate the cpu.
 	 */
 	c = raw_cpu_ptr(s->cpu_slab);
-	tid = READ_ONCE(c->tid);
+	tid = xcmpxchg_read_tid(&c->xcmpxchg);
 
 	/*
 	 * Irqless object alloc/free algorithm used here depends on sequence
@@ -3195,7 +3170,7 @@ redo:
 	 * linked list in between.
 	 */
 
-	object = c->freelist;
+	object = xcmpxchg_read(&c->xcmpxchg);
 	slab = c->slab;
 	/*
 	 * We cannot use the lockless fastpath on PREEMPT_RT because if a
@@ -3208,6 +3183,7 @@ redo:
 	    unlikely(!object || !slab || !node_match(slab, node))) {
 		object = __slab_alloc(s, gfpflags, node, addr, c);
 	} else {
+		void *old;
 		void *next_object = get_freepointer_safe(s, object);
 
 		/*
@@ -3224,11 +3200,8 @@ redo:
 		 * against code executing on this cpu *not* from access by
 		 * other cpus.
 		 */
-		if (unlikely(!this_cpu_cmpxchg_double(
-				s->cpu_slab->freelist, s->cpu_slab->tid,
-				object, tid,
-				next_object, next_tid(tid)))) {
-
+		old = xcmpxchg_local(&c->xcmpxchg, object, next_object, tid);
+		if (unlikely((old != object) || IS_ERR(old))) {
 			note_cmpxchg_failure("slab_alloc", s, tid);
 			goto redo;
 		}
@@ -3472,23 +3445,21 @@ redo:
 	 * during the cmpxchg then the free will succeed.
 	 */
 	c = raw_cpu_ptr(s->cpu_slab);
-	tid = READ_ONCE(c->tid);
+	tid = xcmpxchg_read_tid(&c->xcmpxchg);
 
 	/* Same with comment on barrier() in slab_alloc_node() */
 	barrier();
 
 	if (likely(slab == c->slab)) {
 #ifndef CONFIG_PREEMPT_RT
-		void **freelist = READ_ONCE(c->freelist);
+		void *old;
+		void **freelist = xcmpxchg_read(&c->xcmpxchg);
 
 		set_freepointer(s, tail_obj, freelist);
 
-		if (unlikely(!this_cpu_cmpxchg_double(
-				s->cpu_slab->freelist, s->cpu_slab->tid,
-				freelist, tid,
-				head, next_tid(tid)))) {
-
-			note_cmpxchg_failure("slab_free", s, tid);
+		old = xcmpxchg_local(&c->xcmpxchg, freelist, head, tid);
+		if (unlikely((old != freelist) || IS_ERR(old))) {
+			note_cmpxchg_failure("slab_alloc", s, tid);
 			goto redo;
 		}
 #else /* CONFIG_PREEMPT_RT */
@@ -3507,12 +3478,10 @@ redo:
 			local_unlock(&s->cpu_slab->lock);
 			goto redo;
 		}
-		tid = c->tid;
-		freelist = c->freelist;
 
+		freelist = xcmpxchg_read();
 		set_freepointer(s, tail_obj, freelist);
-		c->freelist = head;
-		c->tid = next_tid(tid);
+		xcmpxchg_set(&c->xcmpxchg, head);
 
 		local_unlock(&s->cpu_slab->lock);
 #endif
@@ -3691,7 +3660,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
 			continue;
 		}
 
-		object = c->freelist;
+		object = xcmpxchg_read(&c->xcmpxchg);
 		if (unlikely(!object)) {
 			/*
 			 * We may have removed an object from c->freelist using
@@ -3700,7 +3669,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
 			 * Since ___slab_alloc() may reenable interrupts while
 			 * allocating memory, we should bump c->tid now.
 			 */
-			c->tid = next_tid(c->tid);
+			xcmpxchg_next_tid(&c->xcmpxchg);
 
 			local_unlock_irq(&s->cpu_slab->lock);
 
@@ -3720,11 +3689,11 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
 
 			continue; /* goto for-loop */
 		}
-		c->freelist = get_freepointer(s, object);
+		__xcmpxchg_set(&c->xcmpxchg, get_freepointer(s, object));
 		p[i] = object;
 		maybe_wipe_obj_freeptr(s, p[i]);
 	}
-	c->tid = next_tid(c->tid);
+	xcmpxchg_next_tid(&c->xcmpxchg);
 	local_unlock_irq(&s->cpu_slab->lock);
 	slub_put_cpu_ptr(s->cpu_slab);
 
