@@ -274,7 +274,6 @@ void create_kmalloc_caches(slab_flags_t);
 /* Find the kmalloc slab corresponding for a certain size */
 struct kmem_cache *kmalloc_slab(size_t, gfp_t);
 
-void *kmalloc_large_node_notrace(size_t size, gfp_t flags, int node);
 void *__kmem_cache_alloc_node(struct kmem_cache *s, gfp_t gfpflags,
 			      int node, size_t orig_size,
 			      unsigned long caller);
