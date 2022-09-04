@@ -5,6 +5,21 @@
  * Internal slab definitions
  */
 
+union slub_counters {
+	__u64 value;
+	struct {
+		union {
+			__u32 counters;
+			struct {
+				unsigned inuse:16;
+				unsigned objects:15;
+				unsigned frozen:1;
+			};
+		};
+		__s32 offset;
+	};
+};
+
 /* Reuses the bits in struct page */
 struct slab {
 	unsigned long __page_flags;
@@ -37,19 +52,32 @@ struct slab {
 #endif
 			};
 			/* Double-word boundary */
-			void *freelist;		/* first free object */
 			union {
-				unsigned long counters;
 				struct {
-					unsigned inuse:16;
-					unsigned objects:15;
-					unsigned frozen:1;
+					union {
+						__u32 counters;
+						struct {
+							unsigned inuse:16;
+							unsigned objects:15;
+							unsigned frozen:1;
+						};
+					};
+					__s32 offset;
 				};
+				__u64 value;
 			};
+#ifdef CONFIG_64BIT
+			void *addr;
+#endif
 		};
 		struct rcu_head rcu_head;
 	};
-	unsigned int __unused;
+
+#ifdef CONFIG_64BIT
+	unsigned int __unused_2;
+#else
+	void *addr;
+#endif
 
 #elif defined(CONFIG_SLOB)
 
@@ -83,9 +111,6 @@ SLAB_MATCH(memcg_data, memcg_data);
 #endif
 #undef SLAB_MATCH
 static_assert(sizeof(struct slab) <= sizeof(struct page));
-#if defined(CONFIG_HAVE_CMPXCHG_DOUBLE) && defined(CONFIG_SLUB)
-static_assert(IS_ALIGNED(offsetof(struct slab, freelist), 16));
-#endif
 
 /**
  * folio_slab - Converts from folio to slab.
