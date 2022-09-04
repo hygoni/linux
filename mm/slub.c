@@ -207,6 +207,22 @@ void *fixup_red_left(struct kmem_cache *s, void *p)
 	return p;
 }
 
+static inline void *offset_to_obj(const struct slab *slab, __s32 offset)
+{
+	if (offset < 0 || !slab)
+		return NULL;
+
+	return slab->addr + offset;
+}
+
+static inline __s32 obj_to_offset(const struct slab *slab, void *object)
+{
+	if (!object)
+		return -1;
+
+	return object - slab->addr;
+}
+
 static inline bool kmem_cache_has_cpu_partial(struct kmem_cache *s)
 {
 #ifdef CONFIG_SLUB_CPU_PARTIAL
@@ -265,8 +281,6 @@ static inline bool kmem_cache_has_cpu_partial(struct kmem_cache *s)
 /* Internal SLUB flags */
 /* Poison object */
 #define __OBJECT_POISON		((slab_flags_t __force)0x80000000U)
-/* Use cmpxchg_double */
-#define __CMPXCHG_DOUBLE	((slab_flags_t __force)0x40000000U)
 
 /*
  * Tracking user of a slab.
@@ -474,27 +488,19 @@ static __always_inline void slab_unlock(struct slab *slab)
  * interrupt the operation.
  */
 static inline bool __cmpxchg_double_slab(struct kmem_cache *s, struct slab *slab,
-		void *freelist_old, unsigned long counters_old,
-		void *freelist_new, unsigned long counters_new,
-		const char *n)
+				         union slub_counters old, union slub_counters new,
+				         const char *n)
 {
 	if (USE_LOCKLESS_FAST_PATH())
 		lockdep_assert_irqs_disabled();
-#if defined(CONFIG_HAVE_CMPXCHG_DOUBLE) && \
-    defined(CONFIG_HAVE_ALIGNED_STRUCT_PAGE)
-	if (s->flags & __CMPXCHG_DOUBLE) {
-		if (cmpxchg_double(&slab->freelist, &slab->counters,
-				   freelist_old, counters_old,
-				   freelist_new, counters_new))
+
+	if (kmem_cache_debug_flags(s, SLAB_NO_CMPXCHG)) {
+		if (try_cmpxchg64(&slab->value, &old.value, new.value))
 			return true;
-	} else
-#endif
-	{
+	} else {
 		slab_lock(slab);
-		if (slab->freelist == freelist_old &&
-					slab->counters == counters_old) {
-			slab->freelist = freelist_new;
-			slab->counters = counters_new;
+		if (slab->value == old.value) {
+			slab->value = new.value;
 			slab_unlock(slab);
 			return true;
 		}
@@ -512,28 +518,19 @@ static inline bool __cmpxchg_double_slab(struct kmem_cache *s, struct slab *slab
 }
 
 static inline bool cmpxchg_double_slab(struct kmem_cache *s, struct slab *slab,
-		void *freelist_old, unsigned long counters_old,
-		void *freelist_new, unsigned long counters_new,
-		const char *n)
+				       union slub_counters old, union slub_counters new,
+				       const char *n)
 {
-#if defined(CONFIG_HAVE_CMPXCHG_DOUBLE) && \
-    defined(CONFIG_HAVE_ALIGNED_STRUCT_PAGE)
-	if (s->flags & __CMPXCHG_DOUBLE) {
-		if (cmpxchg_double(&slab->freelist, &slab->counters,
-				   freelist_old, counters_old,
-				   freelist_new, counters_new))
+	if (kmem_cache_debug_flags(s, SLAB_NO_CMPXCHG)) {
+		if (try_cmpxchg64(&slab->value, &old.value, new.value))
 			return true;
-	} else
-#endif
-	{
+	} else {
 		unsigned long flags;
 
 		local_irq_save(flags);
 		slab_lock(slab);
-		if (slab->freelist == freelist_old &&
-					slab->counters == counters_old) {
-			slab->freelist = freelist_new;
-			slab->counters = counters_new;
+		if (slab->value == old.value) {
+			slab->value = new.value;
 			slab_unlock(slab);
 			local_irq_restore(flags);
 			return true;
@@ -560,11 +557,12 @@ static void __fill_map(unsigned long *obj_map, struct kmem_cache *s,
 		       struct slab *slab)
 {
 	void *addr = slab_address(slab);
+	void *freelist = offset_to_obj(slab, slab->offset);
 	void *p;
 
 	bitmap_zero(obj_map, slab->objects);
 
-	for (p = slab->freelist; p; p = get_freepointer(s, p))
+	for (p = freelist; p; p = get_freepointer(s, p))
 		set_bit(__obj_to_index(s, addr, p), obj_map);
 }
 
@@ -779,9 +777,10 @@ void print_tracking(struct kmem_cache *s, void *object)
 static void print_slab_info(const struct slab *slab)
 {
 	struct folio *folio = (struct folio *)slab_folio(slab);
+	void *freelist = offset_to_obj(slab, slab->offset);
 
 	pr_err("Slab 0x%p objects=%u used=%u fp=0x%p flags=%pGp\n",
-	       slab, slab->objects, slab->inuse, slab->freelist,
+	       slab, slab->objects, slab->inuse, freelist,
 	       folio_flags(folio, 0));
 }
 
@@ -1136,7 +1135,7 @@ static int on_freelist(struct kmem_cache *s, struct slab *slab, void *search)
 	void *object = NULL;
 	int max_objects;
 
-	fp = slab->freelist;
+	fp = offset_to_obj(slab, slab->offset);
 	while (fp && nr <= slab->objects) {
 		if (fp == search)
 			return 1;
@@ -1147,7 +1146,7 @@ static int on_freelist(struct kmem_cache *s, struct slab *slab, void *search)
 				set_freepointer(s, object, NULL);
 			} else {
 				slab_err(s, slab, "Freepointer corrupt");
-				slab->freelist = NULL;
+				slab->offset = -1;
 				slab->inuse = slab->objects;
 				slab_fix(s, "Freelist cleared");
 				return 0;
@@ -1181,12 +1180,14 @@ static int on_freelist(struct kmem_cache *s, struct slab *slab, void *search)
 static void trace(struct kmem_cache *s, struct slab *slab, void *object,
 								int alloc)
 {
+	void *freelist = offset_to_obj(slab, slab->offset);
+
 	if (s->flags & SLAB_TRACE) {
 		pr_info("TRACE %s %s 0x%p inuse=%d fp=0x%p\n",
 			s->name,
 			alloc ? "alloc" : "free",
 			object, slab->inuse,
-			slab->freelist);
+			freelist);
 
 		if (!alloc)
 			print_section(KERN_INFO, "Object ", (void *)object,
@@ -1314,7 +1315,7 @@ bad:
 		 */
 		slab_fix(s, "Marking all objects used");
 		slab->inuse = slab->objects;
-		slab->freelist = NULL;
+		slab->offset = -1;
 	}
 	return 0;
 }
@@ -1817,7 +1818,7 @@ static bool shuffle_freelist(struct kmem_cache *s, struct slab *slab)
 	cur = next_freelist_entry(s, slab, &pos, start, page_limit,
 				freelist_count);
 	cur = setup_object(s, cur);
-	slab->freelist = cur;
+	slab->offset = obj_to_offset(slab, cur);
 
 	for (idx = 1; idx < slab->objects; idx++) {
 		next = next_freelist_entry(s, slab, &pos, start, page_limit,
@@ -1880,6 +1881,7 @@ static struct slab *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
 	slab->objects = oo_objects(oo);
 	slab->inuse = 0;
 	slab->frozen = 0;
+	slab->addr = slab_address(slab);
 
 	account_slab(slab, oo_order(oo), s, flags);
 
@@ -1896,7 +1898,7 @@ static struct slab *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
 	if (!shuffle) {
 		start = fixup_red_left(s, start);
 		start = setup_object(s, start);
-		slab->freelist = start;
+		slab->offset = obj_to_offset(slab, start);
 		for (idx = 0, p = start; idx < slab->objects - 1; idx++) {
 			next = p + s->size;
 			next = setup_object(s, next);
@@ -2005,8 +2007,8 @@ static void *alloc_single_from_partial(struct kmem_cache *s,
 
 	lockdep_assert_held(&n->list_lock);
 
-	object = slab->freelist;
-	slab->freelist = get_freepointer(s, object);
+	object = offset_to_obj(slab, slab->offset);
+	slab->offset = obj_to_offset(slab, get_freepointer(s, object));
 	slab->inuse++;
 
 	if (!alloc_debug_processing(s, slab, object)) {
@@ -2036,8 +2038,8 @@ static void *alloc_single_from_new_slab(struct kmem_cache *s,
 	void *object;
 
 
-	object = slab->freelist;
-	slab->freelist = get_freepointer(s, object);
+	object = offset_to_obj(slab, slab->offset);
+	slab->offset = obj_to_offset(slab, get_freepointer(s, object));
 	slab->inuse = 1;
 
 	if (!alloc_debug_processing(s, slab, object))
@@ -2072,8 +2074,7 @@ static inline void *acquire_slab(struct kmem_cache *s,
 		int mode)
 {
 	void *freelist;
-	unsigned long counters;
-	struct slab new;
+	union slub_counters old, new;
 
 	lockdep_assert_held(&n->list_lock);
 
@@ -2082,23 +2083,20 @@ static inline void *acquire_slab(struct kmem_cache *s,
 	 * The old freelist is the list of objects for the
 	 * per cpu allocation list.
 	 */
-	freelist = slab->freelist;
-	counters = slab->counters;
-	new.counters = counters;
+	old.value = READ_ONCE(slab->value);
+	freelist = offset_to_obj(slab, old.offset);
+	new.counters = old.counters;
 	if (mode) {
 		new.inuse = slab->objects;
-		new.freelist = NULL;
+		new.offset = -1;
 	} else {
-		new.freelist = freelist;
+		new.offset = old.offset;
 	}
 
 	VM_BUG_ON(new.frozen);
 	new.frozen = 1;
 
-	if (!__cmpxchg_double_slab(s, slab,
-			freelist, counters,
-			new.freelist, new.counters,
-			"acquire_slab"))
+	if (!__cmpxchg_double_slab(s, slab, old, new, "acquire_slab"))
 		return NULL;
 
 	remove_partial(n, slab);
@@ -2326,7 +2324,8 @@ static void init_kmem_cache_cpus(struct kmem_cache *s)
 	for_each_possible_cpu(cpu) {
 		c = per_cpu_ptr(s->cpu_slab, cpu);
 		local_lock_init(&c->lock);
-		c->tid = init_tid(cpu);
+		c->tr.tid = init_tid(cpu);
+		c->tr.offset = -1;
 	}
 }
 
@@ -2346,10 +2345,9 @@ static void deactivate_slab(struct kmem_cache *s, struct slab *slab,
 	void *nextfree, *freelist_iter, *freelist_tail;
 	int tail = DEACTIVATE_TO_HEAD;
 	unsigned long flags = 0;
-	struct slab new;
-	struct slab old;
+	union slub_counters old, new;
 
-	if (slab->freelist) {
+	if (slab->offset >= 0) {
 		stat(s, DEACTIVATE_REMOTE_FREES);
 		tail = DEACTIVATE_TO_TAIL;
 	}
@@ -2391,24 +2389,23 @@ static void deactivate_slab(struct kmem_cache *s, struct slab *slab,
 	 */
 redo:
 
-	old.freelist = READ_ONCE(slab->freelist);
-	old.counters = READ_ONCE(slab->counters);
+	old.value = READ_ONCE(slab->value);
 	VM_BUG_ON(!old.frozen);
 
 	/* Determine target state of the slab */
 	new.counters = old.counters;
 	if (freelist_tail) {
 		new.inuse -= free_delta;
-		set_freepointer(s, freelist_tail, old.freelist);
-		new.freelist = freelist;
+		set_freepointer(s, freelist_tail, offset_to_obj(slab, old.offset));
+		new.offset = obj_to_offset(slab, freelist);
 	} else
-		new.freelist = old.freelist;
+		new.offset = old.offset;
 
 	new.frozen = 0;
 
 	if (!new.inuse && n->nr_partial >= s->min_partial) {
 		mode = M_FREE;
-	} else if (new.freelist) {
+	} else if (new.offset >= 0) {
 		mode = M_PARTIAL;
 		/*
 		 * Taking the spinlock removes the possibility that
@@ -2428,10 +2425,7 @@ redo:
 	}
 
 
-	if (!cmpxchg_double_slab(s, slab,
-				old.freelist, old.counters,
-				new.freelist, new.counters,
-				"unfreezing slab")) {
+	if (!cmpxchg_double_slab(s, slab, old, new, "unfreezing slab")) {
 		if (mode == M_PARTIAL || mode == M_FULL)
 			spin_unlock_irqrestore(&n->list_lock, flags);
 		goto redo;
@@ -2463,8 +2457,7 @@ static void __unfreeze_partials(struct kmem_cache *s, struct slab *partial_slab)
 	unsigned long flags = 0;
 
 	while (partial_slab) {
-		struct slab new;
-		struct slab old;
+		union slub_counters old, new;
 
 		slab = partial_slab;
 		partial_slab = slab->next;
@@ -2480,19 +2473,14 @@ static void __unfreeze_partials(struct kmem_cache *s, struct slab *partial_slab)
 
 		do {
 
-			old.freelist = slab->freelist;
-			old.counters = slab->counters;
+			old.value = READ_ONCE(slab->value);
 			VM_BUG_ON(!old.frozen);
 
-			new.counters = old.counters;
-			new.freelist = old.freelist;
-
+			new.value = old.value;
 			new.frozen = 0;
 
-		} while (!__cmpxchg_double_slab(s, slab,
-				old.freelist, old.counters,
-				new.freelist, new.counters,
-				"unfreezing slab"));
+		} while (!__cmpxchg_double_slab(s, slab, old, new,
+						"unfreezing slab"));
 
 		if (unlikely(!new.inuse && n->nr_partial >= s->min_partial)) {
 			slab->next = slab_to_discard;
@@ -2609,11 +2597,11 @@ static inline void flush_slab(struct kmem_cache *s, struct kmem_cache_cpu *c)
 	local_lock_irqsave(&s->cpu_slab->lock, flags);
 
 	slab = c->slab;
-	freelist = c->freelist;
+	freelist = offset_to_obj(slab, c->tr.offset);
 
 	c->slab = NULL;
-	c->freelist = NULL;
-	c->tid = next_tid(c->tid);
+	c->tr.offset = -1;
+	c->tr.tid = next_tid(c->tr.tid);
 
 	local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 
@@ -2626,12 +2614,12 @@ static inline void flush_slab(struct kmem_cache *s, struct kmem_cache_cpu *c)
 static inline void __flush_cpu_slab(struct kmem_cache *s, int cpu)
 {
 	struct kmem_cache_cpu *c = per_cpu_ptr(s->cpu_slab, cpu);
-	void *freelist = c->freelist;
 	struct slab *slab = c->slab;
+	void *freelist = offset_to_obj(slab, c->tr.offset);
 
 	c->slab = NULL;
-	c->freelist = NULL;
-	c->tid = next_tid(c->tid);
+	c->tr.offset = -1;
+	c->tr.tid = next_tid(c->tr.tid);
 
 	if (slab) {
 		deactivate_slab(s, slab, freelist);
@@ -2815,12 +2803,12 @@ out_cnt:
 
 out:
 	if (checks_ok) {
-		void *prior = slab->freelist;
+		void *prior = offset_to_obj(slab, slab->offset);
 
 		/* Perform the actual freeing while we still hold the locks */
 		slab->inuse -= cnt;
 		set_freepointer(s, tail, prior);
-		slab->freelist = head;
+		slab->offset = obj_to_offset(slab, head);
 
 		/* Do we need to remove the slab from full or partial list? */
 		if (!prior) {
@@ -2930,28 +2918,22 @@ static inline bool pfmemalloc_match(struct slab *slab, gfp_t gfpflags)
  */
 static inline void *get_freelist(struct kmem_cache *s, struct slab *slab)
 {
-	struct slab new;
-	unsigned long counters;
-	void *freelist;
+	union slub_counters old, new;
 
 	lockdep_assert_held(this_cpu_ptr(&s->cpu_slab->lock));
 
 	do {
-		freelist = slab->freelist;
-		counters = slab->counters;
+		old.value = READ_ONCE(slab->value);
 
-		new.counters = counters;
+		new.counters = old.counters;
 		VM_BUG_ON(!new.frozen);
 
 		new.inuse = slab->objects;
-		new.frozen = freelist != NULL;
+		new.frozen = old.offset >= 0;
+		new.offset = -1;
+	} while (!__cmpxchg_double_slab(s, slab, old, new, "get_freelist"));
 
-	} while (!__cmpxchg_double_slab(s, slab,
-		freelist, counters,
-		NULL, new.counters,
-		"get_freelist"));
-
-	return freelist;
+	return offset_to_obj(slab, old.offset);
 }
 
 /*
@@ -3024,7 +3006,7 @@ redo:
 		local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 		goto reread_slab;
 	}
-	freelist = c->freelist;
+	freelist = offset_to_obj(slab, c->tr.offset);
 	if (freelist)
 		goto load_freelist;
 
@@ -3032,7 +3014,7 @@ redo:
 
 	if (!freelist) {
 		c->slab = NULL;
-		c->tid = next_tid(c->tid);
+		c->tr.tid = next_tid(c->tr.tid);
 		local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 		stat(s, DEACTIVATE_BYPASS);
 		goto new_slab;
@@ -3050,8 +3032,8 @@ load_freelist:
 	 * That slab must be frozen for per cpu allocations to work.
 	 */
 	VM_BUG_ON(!c->slab->frozen);
-	c->freelist = get_freepointer(s, freelist);
-	c->tid = next_tid(c->tid);
+	c->tr.offset = obj_to_offset(slab, get_freepointer(s, freelist));
+	c->tr.tid = next_tid(c->tr.tid);
 	local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 	return freelist;
 
@@ -3062,10 +3044,10 @@ deactivate_slab:
 		local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 		goto reread_slab;
 	}
-	freelist = c->freelist;
+	freelist = offset_to_obj(slab, c->tr.offset);
 	c->slab = NULL;
-	c->freelist = NULL;
-	c->tid = next_tid(c->tid);
+	c->tr.offset = -1;
+	c->tr.tid = next_tid(c->tr.tid);
 	local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 	deactivate_slab(s, slab, freelist);
 
@@ -3123,8 +3105,8 @@ new_objects:
 	 * No other reference to the slab yet so we can
 	 * muck around with it freely without cmpxchg
 	 */
-	freelist = slab->freelist;
-	slab->freelist = NULL;
+	freelist = offset_to_obj(slab, slab->offset);
+	slab->offset = -1;
 	slab->inuse = slab->objects;
 	slab->frozen = 1;
 
@@ -3156,12 +3138,12 @@ retry_load_slab:
 
 	local_lock_irqsave(&s->cpu_slab->lock, flags);
 	if (unlikely(c->slab)) {
-		void *flush_freelist = c->freelist;
 		struct slab *flush_slab = c->slab;
+		void *flush_freelist = offset_to_obj(flush_slab, c->tr.offset);
 
 		c->slab = NULL;
-		c->freelist = NULL;
-		c->tid = next_tid(c->tid);
+		c->tr.offset = -1;
+		c->tr.tid = next_tid(c->tr.tid);
 
 		local_unlock_irqrestore(&s->cpu_slab->lock, flags);
 
@@ -3230,9 +3212,9 @@ static __always_inline void *slab_alloc_node(struct kmem_cache *s, struct list_l
 	void *object;
 	struct kmem_cache_cpu *c;
 	struct slab *slab;
-	unsigned long tid;
 	struct obj_cgroup *objcg = NULL;
 	bool init = false;
+	union slub_transaction tr;
 
 	s = slab_pre_alloc_hook(s, lru, &objcg, 1, gfpflags);
 	if (!s)
@@ -3256,7 +3238,7 @@ redo:
 	 * and cmpxchg later will validate the cpu.
 	 */
 	c = raw_cpu_ptr(s->cpu_slab);
-	tid = READ_ONCE(c->tid);
+	tr = READ_ONCE(c->tr);
 
 	/*
 	 * Irqless object alloc/free algorithm used here depends on sequence
@@ -3275,14 +3257,15 @@ redo:
 	 * linked list in between.
 	 */
 
-	object = c->freelist;
 	slab = c->slab;
+	object = offset_to_obj(slab, tr.offset);
 
 	if (!USE_LOCKLESS_FAST_PATH() ||
-	    unlikely(!object || !slab || !node_match(slab, node))) {
+	    unlikely(!object || !node_match(slab, node))) {
 		object = __slab_alloc(s, gfpflags, node, addr, c);
 	} else {
 		void *next_object = get_freepointer_safe(s, object);
+		union slub_transaction new;
 
 		/*
 		 * The cmpxchg will only match if there was no additional
@@ -3298,12 +3281,13 @@ redo:
 		 * against code executing on this cpu *not* from access by
 		 * other cpus.
 		 */
-		if (unlikely(!this_cpu_cmpxchg_double(
-				s->cpu_slab->freelist, s->cpu_slab->tid,
-				object, tid,
-				next_object, next_tid(tid)))) {
+		new.tid = next_tid(tr.tid);
+		new.offset = obj_to_offset(slab, next_object);
 
-			note_cmpxchg_failure("slab_alloc", s, tid);
+		if (unlikely(cmpxchg64_local(&c->tr.value,
+					     tr.value,
+					     new.value) != tr.value)) {
+			note_cmpxchg_failure("slab_alloc", s, tr.tid);
 			goto redo;
 		}
 		prefetch_freepointer(s, next_object);
@@ -3382,8 +3366,7 @@ static void __slab_free(struct kmem_cache *s, struct slab *slab,
 {
 	void *prior;
 	int was_frozen;
-	struct slab new;
-	unsigned long counters;
+	union slub_counters old, new;
 	struct kmem_cache_node *n = NULL;
 	unsigned long flags;
 
@@ -3402,12 +3385,13 @@ static void __slab_free(struct kmem_cache *s, struct slab *slab,
 			spin_unlock_irqrestore(&n->list_lock, flags);
 			n = NULL;
 		}
-		prior = slab->freelist;
-		counters = slab->counters;
+		old.value = READ_ONCE(slab->value);
+		prior = offset_to_obj(slab, old.offset);
 		set_freepointer(s, tail, prior);
-		new.counters = counters;
+		new.counters = old.counters;
 		was_frozen = new.frozen;
 		new.inuse -= cnt;
+		new.offset = obj_to_offset(slab, head);
 		if ((!new.inuse || !prior) && !was_frozen) {
 
 			if (kmem_cache_has_cpu_partial(s) && !prior) {
@@ -3436,10 +3420,7 @@ static void __slab_free(struct kmem_cache *s, struct slab *slab,
 			}
 		}
 
-	} while (!cmpxchg_double_slab(s, slab,
-		prior, counters,
-		head, new.counters,
-		"__slab_free"));
+	} while (!cmpxchg_double_slab(s, slab, old, new, "__slab_free"));
 
 	if (likely(!n)) {
 
@@ -3516,6 +3497,7 @@ static __always_inline void do_slab_free(struct kmem_cache *s,
 	struct kmem_cache_cpu *c;
 	unsigned long tid;
 	void **freelist;
+	union slub_transaction tr;
 
 redo:
 	/*
@@ -3525,7 +3507,7 @@ redo:
 	 * during the cmpxchg then the free will succeed.
 	 */
 	c = raw_cpu_ptr(s->cpu_slab);
-	tid = READ_ONCE(c->tid);
+	tr = READ_ONCE(c->tr);
 
 	/* Same with comment on barrier() in slab_alloc_node() */
 	barrier();
@@ -3536,15 +3518,17 @@ redo:
 	}
 
 	if (USE_LOCKLESS_FAST_PATH()) {
-		freelist = READ_ONCE(c->freelist);
+		union slub_transaction new;
 
+		freelist = offset_to_obj(slab, tr.offset);
 		set_freepointer(s, tail_obj, freelist);
 
-		if (unlikely(!this_cpu_cmpxchg_double(
-				s->cpu_slab->freelist, s->cpu_slab->tid,
-				freelist, tid,
-				head, next_tid(tid)))) {
+		new.tid = next_tid(tr.tid);
+		new.offset = obj_to_offset(slab, head);
 
+		if (unlikely(cmpxchg64_local(&c->tr.value,
+					     tr.value,
+					     new.value) != tr.value)) {
 			note_cmpxchg_failure("slab_free", s, tid);
 			goto redo;
 		}
@@ -3556,12 +3540,11 @@ redo:
 			local_unlock(&s->cpu_slab->lock);
 			goto redo;
 		}
-		tid = c->tid;
-		freelist = c->freelist;
+		freelist = offset_to_obj(slab, tr.offset);
 
 		set_freepointer(s, tail_obj, freelist);
-		c->freelist = head;
-		c->tid = next_tid(tid);
+		c->tr.offset = obj_to_offset(slab, head);
+		c->tr.tid = next_tid(tid);
 
 		local_unlock(&s->cpu_slab->lock);
 	}
@@ -3729,7 +3712,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
 			continue;
 		}
 
-		object = c->freelist;
+		object = offset_to_obj(c->slab, c->tr.offset);
 		if (unlikely(!object)) {
 			/*
 			 * We may have removed an object from c->freelist using
@@ -3738,7 +3721,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
 			 * Since ___slab_alloc() may reenable interrupts while
 			 * allocating memory, we should bump c->tid now.
 			 */
-			c->tid = next_tid(c->tid);
+			c->tr.tid = next_tid(c->tr.tid);
 
 			local_unlock_irq(&s->cpu_slab->lock);
 
@@ -3758,11 +3741,12 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
 
 			continue; /* goto for-loop */
 		}
-		c->freelist = get_freepointer(s, object);
+		c->tr.offset = obj_to_offset(c->slab, get_freepointer(s, object));
+
 		p[i] = object;
 		maybe_wipe_obj_freeptr(s, p[i]);
 	}
-	c->tid = next_tid(c->tid);
+	c->tr.tid = next_tid(c->tr.tid);
 	local_unlock_irq(&s->cpu_slab->lock);
 	slub_put_cpu_ptr(s->cpu_slab);
 
@@ -3980,14 +3964,14 @@ static void early_kmem_cache_node_alloc(int node)
 		pr_err("SLUB: Allocating a useless per node structure in order to be able to continue\n");
 	}
 
-	n = slab->freelist;
+	n = offset_to_obj(slab, slab->offset);
 	BUG_ON(!n);
 #ifdef CONFIG_SLUB_DEBUG
 	init_object(kmem_cache_node, n, SLUB_RED_ACTIVE);
 	init_tracking(kmem_cache_node, n);
 #endif
 	n = kasan_slab_alloc(kmem_cache_node, n, GFP_KERNEL, false);
-	slab->freelist = get_freepointer(kmem_cache_node, n);
+	slab->offset = obj_to_offset(slab, get_freepointer(kmem_cache_node, n));
 	slab->inuse = 1;
 	kmem_cache_node->node[node] = n;
 	init_kmem_cache_node(n);
@@ -4232,13 +4216,6 @@ static int kmem_cache_open(struct kmem_cache *s, slab_flags_t flags)
 				goto error;
 		}
 	}
-
-#if defined(CONFIG_HAVE_CMPXCHG_DOUBLE) && \
-    defined(CONFIG_HAVE_ALIGNED_STRUCT_PAGE)
-	if (system_has_cmpxchg_double() && (s->flags & SLAB_NO_CMPXCHG) == 0)
-		/* Enable fast mode */
-		s->flags |= __CMPXCHG_DOUBLE;
-#endif
 
 	/*
 	 * The larger the object size is, the more slabs we want on the partial
@@ -4741,6 +4718,12 @@ void __init kmem_cache_init(void)
 	/* Print slub debugging pointers without hashing */
 	if (__slub_debug_enabled())
 		no_hash_pointers_enable(NULL);
+
+	/* Such configuration is not supported */
+	if (PAGE_SHIFT + slub_max_order > sizeof(__s32) * BITS_PER_BYTE - 1)
+		panic("SLUB: PAGE_SHIFT + slub_max_order (%u) is bigger than %ld\n",
+				PAGE_SHIFT + slub_max_order,
+				sizeof(__s32) * BITS_PER_BYTE - 1);
 
 	kmem_cache_node = &boot_kmem_cache_node;
 	kmem_cache = &boot_kmem_cache;

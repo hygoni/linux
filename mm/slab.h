@@ -5,6 +5,21 @@
  * Internal slab definitions
  */
 
+union slub_counters {
+	__u64 value;
+	struct {
+		union {
+			__u32 counters;
+			struct {
+				unsigned inuse:16;
+				unsigned objects:15;
+				unsigned frozen:1;
+			};
+		};
+		__s32 offset;
+	};
+};
+
 /* Reuses the bits in struct page */
 struct slab {
 	unsigned long __page_flags;
@@ -34,16 +49,27 @@ struct slab {
 	};
 	struct kmem_cache *slab_cache;
 	/* Double-word boundary */
-	void *freelist;		/* first free object */
 	union {
-		unsigned long counters;
+		__u64 value;
 		struct {
-			unsigned inuse:16;
-			unsigned objects:15;
-			unsigned frozen:1;
+			union {
+				__u32 counters;
+				struct {
+					unsigned inuse:16;
+					unsigned objects:15;
+					unsigned frozen:1;
+				};
+			};
+			__s32 offset;
 		};
 	};
+#ifdef CONFIG_64BIT
+	/* Ensure doubleword on 64BIT */
+	void *addr;
 	unsigned int __unused;
+#else
+	void *addr;
+#endif
 
 #elif defined(CONFIG_SLOB)
 
