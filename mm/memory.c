@@ -1840,7 +1840,7 @@ pte_t *__get_locked_pte(struct mm_struct *mm, unsigned long addr,
 
 static int validate_page_before_insert(struct page *page)
 {
-	if (PageAnon(page) || PageSlab(page) || page_has_type(page))
+	if (PageAnon(page) || page_has_type(page))
 		return -EINVAL;
 	flush_dcache_page(page);
 	return 0;

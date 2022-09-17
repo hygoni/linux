@@ -20,7 +20,16 @@ struct slab {
 		};
 		struct rcu_head rcu_head;
 	};
-	unsigned int active;
+	struct {
+		/* always place page_type in upper 16 bits of _mapcount */
+#ifdef CPU_BIG_ENDIAN
+		__u16 page_type;
+		__u16 active;
+#else
+		__u16 active;
+		__u16 page_type;
+#endif
+	};
 
 #elif defined(CONFIG_SLUB)
 

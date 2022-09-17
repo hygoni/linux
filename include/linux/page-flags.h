@@ -107,7 +107,6 @@ enum pageflags {
 	PG_workingset,
 	PG_waiters,		/* Page has waiters, check its waitqueue. Must be bit #7 and in the same byte as "PG_locked" */
 	PG_error,
-	PG_slab,
 	PG_owner_priv_1,	/* Owner use. If pagecache, fs may use*/
 	PG_arch_1,
 	PG_reserved,
@@ -484,7 +483,6 @@ PAGEFLAG(Active, active, PF_HEAD) __CLEARPAGEFLAG(Active, active, PF_HEAD)
 	TESTCLEARFLAG(Active, active, PF_HEAD)
 PAGEFLAG(Workingset, workingset, PF_HEAD)
 	TESTCLEARFLAG(Workingset, workingset, PF_HEAD)
-__PAGEFLAG(Slab, slab, PF_NO_TAIL)
 __PAGEFLAG(SlobFree, slob_free, PF_NO_TAIL)
 PAGEFLAG(Checked, checked, PF_NO_COMPOUND)	   /* Used by some filesystems */
 
@@ -926,28 +924,35 @@ static inline bool is_page_hwpoison(struct page *page)
 }
 
 /*
- * For pages that are never mapped to userspace (and aren't PageSlab),
- * page_type may be used.  Because it is initialised to -1, we invert the
- * sense of the bit, so __SetPageFoo *clears* the bit used for PageFoo, and
- * __ClearPageFoo *sets* the bit used for PageFoo.  We reserve a few high and
- * low bits so that an underflow or overflow of page_mapcount() won't be
- * mistaken for a page type value.
+ * For pages that are never mapped to userspace, page_type may be used.
+ * Because it is initialised to -1, we invert the sense of the bit,
+ * so __SetPageFoo *clears* the bit used for PageFoo, and __ClearPageFoo
+ * *sets* the bit used for PageFoo.  We reserve a few high and low bits
+ * so that an underflow or overflow of page_mapcount() won't be mistaken
+ * for a page type value.
  */
 
-#define PAGE_TYPE_BASE	0xf0000000
-/* Reserve		0x0000007f to catch underflows of page_mapcount */
-#define PAGE_MAPCOUNT_RESERVE	-128
-#define PG_buddy	0x00000080
-#define PG_offline	0x00000100
-#define PG_table	0x00000200
-#define PG_guard	0x00000400
+#define PAGE_TYPE_BASE	0xf000
+#define PAGE_MAPCOUNT_RESERVE	-1
+#define PG_buddy	0x0002
+#define PG_offline	0x0004
+#define PG_table	0x0008
+#define PG_guard	0x0010
+#define PG_slab		0x0020
 
 #define PageType(page, flag)						\
 	((page->page_type & (PAGE_TYPE_BASE | flag)) == PAGE_TYPE_BASE)
 
-static inline int page_has_type(struct page *page)
+#define PAGE_TYPE_MASK	((1UL << (BITS_PER_BYTE * sizeof(__u16))) - 1)
+
+static inline bool page_has_type(struct page *page)
 {
 	return (int)page->page_type < PAGE_MAPCOUNT_RESERVE;
+}
+
+static inline bool page_type_valid(__u16 page_type)
+{
+	return (page_type & PAGE_TYPE_BASE) == PAGE_TYPE_BASE;
 }
 
 #define PAGE_TYPE_OPS(uname, lname)					\
@@ -955,15 +960,54 @@ static __always_inline int Page##uname(struct page *page)		\
 {									\
 	return PageType(page, PG_##lname);				\
 }									\
+static __always_inline int folio_test_##lname(struct folio *folio)	\
+{									\
+	struct page *page = &folio->page;				\
+									\
+	VM_BUG_ON_PAGE(PageTail(page), page);				\
+	return PageType(page, PG_##lname);				\
+}									\
+static __always_inline int __folio_test_##lname(struct folio *folio)	\
+{									\
+	struct page *page = &folio->page;				\
+									\
+	return PageType(page, PG_##lname);				\
+}									\
 static __always_inline void __SetPage##uname(struct page *page)		\
 {									\
 	VM_BUG_ON_PAGE(!PageType(page, 0), page);			\
 	page->page_type &= ~PG_##lname;					\
 }									\
+static __always_inline void folio_set_##lname(struct folio *folio)	\
+{									\
+	struct page *page = &folio->page;				\
+									\
+	VM_BUG_ON_PAGE(PageTail(page), page);				\
+	__SetPage##uname(page);						\
+}									\
+static __always_inline void __folio_set_##lname(struct folio *folio)	\
+{									\
+	struct page *page = &folio->page;				\
+									\
+	__SetPage##uname(page);						\
+}									\
 static __always_inline void __ClearPage##uname(struct page *page)	\
 {									\
 	VM_BUG_ON_PAGE(!Page##uname(page), page);			\
 	page->page_type |= PG_##lname;					\
+}									\
+static __always_inline void folio_clear_##lname(struct folio *folio)	\
+{									\
+	struct page *page = &folio->page;				\
+									\
+	VM_BUG_ON_PAGE(PageTail(page), page);				\
+	__ClearPage##uname(page);					\
+}									\
+static __always_inline void __folio_clear_##lname(struct folio *folio)	\
+{									\
+	struct page *page = &folio->page;				\
+									\
+	__ClearPage##uname(page);					\
 }
 
 /*
@@ -995,6 +1039,9 @@ PAGE_TYPE_OPS(Buddy, buddy)
  * page_offline_freeze()/page_offline_thaw().
  */
 PAGE_TYPE_OPS(Offline, offline)
+
+/* PageSlab() indicates that the page is used by slab subsystem. */
+PAGE_TYPE_OPS(Slab, slab)
 
 extern void page_offline_freeze(void);
 extern void page_offline_thaw(void);
@@ -1057,8 +1104,8 @@ static __always_inline void __ClearPageAnonExclusive(struct page *page)
 	(1UL << PG_lru		| 1UL << PG_locked	|	\
 	 1UL << PG_private	| 1UL << PG_private_2	|	\
 	 1UL << PG_writeback	| 1UL << PG_reserved	|	\
-	 1UL << PG_slab		| 1UL << PG_active 	|	\
-	 1UL << PG_unevictable	| __PG_MLOCKED)
+	 1UL << PG_active	| 1UL << PG_unevictable	|	\
+	 __PG_MLOCKED)
 
 /*
  * Flags checked when a page is prepped for return by the page allocator.

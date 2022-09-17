@@ -67,7 +67,7 @@ static ssize_t kpagecount_read(struct file *file, char __user *buf,
 		 */
 		ppage = pfn_to_online_page(pfn);
 
-		if (!ppage || PageSlab(ppage) || page_has_type(ppage))
+		if (!ppage || page_has_type(ppage))
 			pcount = 0;
 		else
 			pcount = page_mapcount(ppage);
@@ -123,11 +123,8 @@ u64 stable_page_flags(struct page *page)
 
 	/*
 	 * pseudo flags for the well known (anonymous) memory mapped pages
-	 *
-	 * Note that page->_mapcount is overloaded in SLOB/SLUB/SLQB, so the
-	 * simple test in page_mapped() is not enough.
 	 */
-	if (!PageSlab(page) && page_mapped(page))
+	if (page_mapped(page))
 		u |= 1 << KPF_MMAP;
 	if (PageAnon(page))
 		u |= 1 << KPF_ANON;
@@ -183,7 +180,8 @@ u64 stable_page_flags(struct page *page)
 
 	u |= kpf_copy_bit(k, KPF_LOCKED,	PG_locked);
 
-	u |= kpf_copy_bit(k, KPF_SLAB,		PG_slab);
+	if (PageSlab(page))
+		u |= 1 << KPF_SLAB;
 	if (PageTail(page) && PageSlab(compound_head(page)))
 		u |= 1 << KPF_SLAB;
 

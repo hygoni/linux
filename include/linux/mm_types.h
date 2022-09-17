@@ -193,12 +193,24 @@ struct page {
 		atomic_t _mapcount;
 
 		/*
-		 * If the page is neither PageSlab nor mappable to userspace,
-		 * the value stored here may help determine what this page
-		 * is used for.  See page-flags.h for a list of page types
-		 * which are currently stored here.
+		 * If the page is not mappable to userspace, the value
+		 * stored here may help determine what this page is used for.
+		 * See page-flags.h for a list of page types which are currently
+		 * stored here.
 		 */
-		unsigned int page_type;
+		struct {
+			/*
+			 * Always place page_type in
+			 * upper 16 bits of _mapcount
+			 */
+#ifdef CPU_BIG_ENDIAN
+			__u16 page_type;
+			__u16 active;
+#else
+			__u16 active;
+			__u16 page_type;
+#endif
+		};
 	};
 
 	/* Usage count. *DO NOT USE DIRECTLY*. See page_ref.h */
