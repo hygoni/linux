@@ -1125,7 +1125,7 @@ static int me_huge_page(struct page_state *ps, struct page *p)
 #define head		(1UL << PG_head)
 #define reserved	(1UL << PG_reserved)
 
-static struct page_state error_states[] = {
+static struct page_state error_states_from_page_flags[] = {
 	{ reserved,	reserved,	MF_MSG_KERNEL,	me_kernel },
 	/*
 	 * free pages are specially detected outside this table:
@@ -1145,6 +1145,28 @@ static struct page_state error_states[] = {
 
 	{ lru|dirty,	lru|dirty,	MF_MSG_DIRTY_LRU,	me_pagecache_dirty },
 	{ lru|dirty,	lru,		MF_MSG_CLEAN_LRU,	me_pagecache_clean },
+
+	/*
+	 * Catchall entry: must be at end.
+	 */
+	{ 0,		0,		MF_MSG_UNKNOWN,	me_unknown },
+};
+
+/* flags set in page_type */
+#define slab		PG_slab
+
+static struct page_state error_states_from_page_type[] = {
+	/*
+	 * free pages are specially detected outside this table:
+	 * PG_buddy pages only make a small fraction of all free pages.
+	 */
+
+	/*
+	 * Could in theory check if slab page is free or if we can drop
+	 * currently unused objects without touching them. But just
+	 * treat it as standard kernel for now.
+	 */
+	{ slab,		slab,		MF_MSG_SLAB,	me_kernel },
 
 	/*
 	 * Catchall entry: must be at end.
@@ -1498,21 +1520,30 @@ static int identify_page_state(unsigned long pfn, struct page *p,
 {
 	struct page_state *ps;
 
+	for (ps = error_states_from_page_type;; ps++) {
+		if (!ps->mask)
+			break;
+		if (page_has_type(p) && PageType(p, ps->mask))
+			goto out;
+	}
+
 	/*
 	 * The first check uses the current page flags which may not have any
 	 * relevant information. The second check with the saved page flags is
 	 * carried out only if the first check can't determine the page status.
 	 */
-	for (ps = error_states;; ps++)
+	for (ps = error_states_from_page_flags;; ps++) {
 		if ((p->flags & ps->mask) == ps->res)
 			break;
+	}
 
 	page_flags |= (p->flags & (1UL << PG_dirty));
 
 	if (!ps->mask)
-		for (ps = error_states;; ps++)
+		for (ps = error_states_from_page_flags;; ps++)
 			if ((page_flags & ps->mask) == ps->res)
 				break;
+out:
 	return page_action(ps, p, pfn);
 }
 
