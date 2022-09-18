@@ -137,6 +137,18 @@ IF_HAVE_PG_SKIP_KASAN_POISON(PG_skip_kasan_poison, "skip_kasan_poison")
 	__def_pageflag_names						\
 	) : "none"
 
+#define __def_pagetype_names						\
+	{PG_slab,			"slab"		},		\
+	{PG_offline,			"offline"	},		\
+	{PG_guard,			"guard"		},		\
+	{PG_table,			"table"		},		\
+	{PG_buddy,			"buddy"		}
+
+#define show_page_types(page_type)					\
+	((int)page_type < PAGE_MAPCOUNT_RESERVE) ?			\
+		__print_flags(~page_type, "|", __def_pagetype_names)	\
+	: "none"
+
 #if defined(CONFIG_X86)
 #define __VM_ARCH_SPECIFIC_1 {VM_PAT,     "pat"           }
 #elif defined(CONFIG_PPC)
