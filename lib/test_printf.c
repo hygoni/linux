@@ -654,12 +654,26 @@ page_flags_test(int section, int node, int zone, int last_cpupid,
 	test(cmp_buf, "%pGp", &flags);
 }
 
+static void __init page_type_test(__u16 page_type, const char *name,
+				  char *cmp_buf)
+{
+	unsigned long size;
+
+	size = scnprintf(cmp_buf, BUF_SIZE, "%#hx(", page_type);
+	if ((~page_type) & PAGE_TYPE_MASK)
+		size += scnprintf(cmp_buf + size, BUF_SIZE - size, "%s", name);
+
+	snprintf(cmp_buf + size, BUF_SIZE - size, ")");
+	test(cmp_buf, "%pGt", &page_type);
+}
+
 static void __init
 flags(void)
 {
 	unsigned long flags;
 	char *cmp_buffer;
 	gfp_t gfp;
+	__u16 page_type;
 
 	cmp_buffer = kmalloc(BUF_SIZE, GFP_KERNEL);
 	if (!cmp_buffer)
@@ -698,6 +712,15 @@ flags(void)
 							(unsigned long) gfp);
 	gfp |= __GFP_ATOMIC;
 	test(cmp_buffer, "%pGg", &gfp);
+
+	page_type = ~0;
+	page_type_test(page_type, "", cmp_buffer);
+
+	page_type = ~PG_slab;
+	page_type_test(page_type, "slab", cmp_buffer);
+
+	page_type = ~(PG_slab | PG_table | PG_buddy);
+	page_type_test(page_type, "slab|table|buddy", cmp_buffer);
 
 	kfree(cmp_buffer);
 }

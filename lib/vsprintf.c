@@ -2051,6 +2051,30 @@ char *format_page_flags(char *buf, char *end, unsigned long flags)
 	return buf;
 }
 
+static
+char *format_page_type(char *buf, char *end, __u16 page_type)
+{
+
+	if ((int)page_type >= PAGE_MAPCOUNT_RESERVE)
+		return string(buf, end, "no type for user-mapped page", default_str_spec);
+
+	buf = number(buf, end, page_type & PAGE_TYPE_MASK,
+		     default_flag_spec);
+
+	if (buf < end)
+		*buf = '(';
+	buf++;
+
+	if (~page_type)
+		buf = format_flags(buf, end, ~page_type, pagetype_names);
+
+	if (buf < end)
+		*buf = ')';
+	buf++;
+
+	return buf;
+}
+
 static noinline_for_stack
 char *flags_string(char *buf, char *end, void *flags_ptr,
 		   struct printf_spec spec, const char *fmt)
@@ -2064,6 +2088,8 @@ char *flags_string(char *buf, char *end, void *flags_ptr,
 	switch (fmt[1]) {
 	case 'p':
 		return format_page_flags(buf, end, *(unsigned long *)flags_ptr);
+	case 't':
+		return format_page_type(buf, end, *(__u16 *)flags_ptr);
 	case 'v':
 		flags = *(unsigned long *)flags_ptr;
 		names = vmaflag_names;

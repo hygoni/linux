@@ -575,13 +575,14 @@ The field width is passed by value, the bitmap is passed by reference.
 Helper macros cpumask_pr_args() and nodemask_pr_args() are available to ease
 printing cpumask and nodemask.
 
-Flags bitfields such as page flags, gfp_flags
+Flags bitfields such as page flags, page_type, gfp_flags
 ---------------------------------------------
 
 ::
 
 	%pGp	0x17ffffc0002036(referenced|uptodate|lru|active|private|node=0|zone=2|lastcpupid=0x1fffff)
-	%pGg	GFP_USER|GFP_DMA32|GFP_NOWARN
+	%pGt    0xffdf(slab)
+        %pGg	GFP_USER|GFP_DMA32|GFP_NOWARN
 	%pGv	read|exec|mayread|maywrite|mayexec|denywrite
 
 For printing flags bitfields as a collection of symbolic constants that
